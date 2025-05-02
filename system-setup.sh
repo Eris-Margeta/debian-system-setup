@@ -268,38 +268,69 @@ install_search_tools() {
 # Function to install Lua
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 install_lua() {
-  log_info "Installing Lua 5.1 and LuaJIT..."
+  log_info "Setting up Lua 5.1 and LuaJIT..."
 
-  # First, remove any existing Lua and LuaJIT installations
-  log_info "Removing any existing Lua and LuaJIT installations..."
-  if ! apt purge -y lua* luajit* liblua* libluajit*; then
-    log_warning "Failed to completely purge Lua packages, but continuing anyway"
+  # Check if Lua and LuaJIT are already installed
+  local lua_installed=false
+  local luajit_installed=false
+
+  if dpkg -l | grep -q "lua5.1"; then
+    lua_installed=true
+    log_info "Lua 5.1 is already installed, will reinstall"
   fi
 
-  # Also remove any potential source installations
+  if dpkg -l | grep -q "luajit"; then
+    luajit_installed=true
+    log_info "LuaJIT is already installed, will reinstall"
+  fi
+
+  # Clean up custom installations only if they exist
   if [ -d "/usr/local/bin/lua" ]; then
+    log_info "Removing custom Lua installation from /usr/local/bin/lua"
     rm -rf /usr/local/bin/lua*
   fi
+
   if [ -d "/usr/local/bin/luajit" ]; then
+    log_info "Removing custom LuaJIT installation from /usr/local/bin/luajit"
     rm -rf /usr/local/bin/luajit*
   fi
+
   if [ -d "/usr/local/include/lua" ]; then
+    log_info "Removing custom Lua headers from /usr/local/include/lua"
     rm -rf /usr/local/include/lua*
   fi
+
   if [ -d "/usr/local/lib/lua" ]; then
+    log_info "Removing custom Lua libraries from /usr/local/lib/lua"
     rm -rf /usr/local/lib/lua*
   fi
 
-  # Add buster repository temporarily for Lua 5.1
+  # Add buster repository temporarily for Lua 5.1 if needed
   if ! grep -q "deb http://deb.debian.org/debian buster main" /etc/apt/sources.list; then
+    log_info "Adding Debian Buster repository for Lua 5.1"
     echo "# Add Buster repository for Lua 5.1" >>/etc/apt/sources.list
     echo "deb http://deb.debian.org/debian buster main" >>/etc/apt/sources.list
     apt update -y >/dev/null 2>&1
   fi
 
-  # Install Lua 5.1 and LuaJIT
-  if ! apt install -y --reinstall lua5.1 luajit; then
-    log_error "Failed to install Lua"
+  # Install or reinstall Lua and LuaJIT as needed
+  local install_cmd="apt install -y"
+
+  if $lua_installed; then
+    install_cmd+=" --reinstall lua5.1"
+  else
+    install_cmd+=" lua5.1"
+  fi
+
+  if $luajit_installed; then
+    install_cmd+=" --reinstall luajit"
+  else
+    install_cmd+=" luajit"
+  fi
+
+  log_info "Installing/reinstalling Lua packages with: $install_cmd"
+  if ! eval "$install_cmd"; then
+    log_error "Failed to install Lua packages"
     return 1
   fi
 
@@ -307,6 +338,7 @@ install_lua() {
   sed -i 's/^deb http:\/\/deb.debian.org\/debian buster main/# deb http:\/\/deb.debian.org\/debian buster main/' /etc/apt/sources.list
   apt update -y >/dev/null 2>&1
 
+  log_info "Lua installation completed successfully"
   return 0
 }
 
