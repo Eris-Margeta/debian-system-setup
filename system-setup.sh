@@ -112,25 +112,133 @@ update_system() {
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 install_build_essentials() {
   log_info "Installing essential build tools..."
-  if ! apt install -y --reinstall build-essential make libssl-dev libghc-zlib-dev \
-    libcurl4-gnutls-dev libexpat1-dev gettext unzip \
-    gfortran libopenblas-dev cmake || ! command -v gcc >/dev/null 2>&1; then
-    log_error "Failed to install build essentials"
+
+  # Step 1: Check existing installations
+  log_info "Step 1/3: Checking existing build tool installations..."
+  build_tools=(
+    "build-essential"
+    "make"
+    "libssl-dev"
+    "libghc-zlib-dev"
+    "libcurl4-gnutls-dev"
+    "libexpat1-dev"
+    "gettext"
+    "unzip"
+    "gfortran"
+    "libopenblas-dev"
+    "cmake"
+  )
+  missing_tools=()
+
+  # Check which packages are installed using dpkg
+  for tool in "${build_tools[@]}"; do
+    if dpkg -l | grep -q "ii  $tool "; then
+      log_info "- ✓ $tool is already installed"
+    else
+      log_info "- ✗ $tool needs to be installed"
+      missing_tools+=("$tool")
+    fi
+  done
+
+  # Check for gcc separately since it's a command
+  if command -v gcc >/dev/null 2>&1; then
+    gcc_version=$(gcc --version | head -n 1)
+    log_info "- ✓ gcc is already installed: $gcc_version"
+  else
+    log_info "- ✗ gcc is not available, will be installed with build-essential"
+    # Make sure build-essential is in missing_tools if gcc is missing
+    if ! [[ " ${missing_tools[*]} " =~ "build-essential" ]]; then
+      missing_tools+=("build-essential")
+    fi
+  fi
+
+  # Step 2: Install missing build tools
+  if [ ${#missing_tools[@]} -eq 0 ]; then
+    log_info "Step 2/3: ✓ All build tools are already installed"
+  else
+    log_info "Step 2/3: Installing missing build tools..."
+    log_info "- Installing: ${missing_tools[*]}"
+
+    if ! apt install -y "${missing_tools[@]}"; then
+      log_error "Failed to install build tools: ${missing_tools[*]}"
+      return 1
+    fi
+    log_info "✓ Successfully installed missing build tools"
+  fi
+
+  # Step 3: Verify key tool installations
+  log_info "Step 3/3: Verifying key build tool installations..."
+  verification_tools=("gcc" "make" "cmake")
+  all_verified=true
+
+  for tool in "${verification_tools[@]}"; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      version=$("$tool" --version | head -n 1)
+      log_info "- ✓ $tool: $version"
+    else
+      log_error "- ✗ $tool installation failed"
+      all_verified=false
+    fi
+  done
+
+  if $all_verified; then
+    log_info "✅ Build essentials installation completed successfully"
+    return 0
+  else
+    log_error "Build essentials installation verification failed"
     return 1
   fi
-  return 0
 }
 
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 # Function to install ZSH and set it as default shell
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 install_zsh() {
-  log_info "Installing/Reinstalling ZSH and setting as default shell..."
+  log_info "Installing ZSH and setting it as default shell..."
 
-  # Install/Reinstall ZSH using the reinstall flag
-  if ! apt install --reinstall -y zsh zplug; then
-    log_error "Failed to reinstall ZSH"
-    return 1
+  # Step 1: Check existing ZSH installation
+  log_info "Step 1/5: Checking existing ZSH installation..."
+  if command -v zsh >/dev/null 2>&1; then
+    zsh_version=$(zsh --version)
+    log_info "- ✓ ZSH is already installed: $zsh_version"
+    needs_install=false
+  else
+    log_info "- ✗ ZSH is not installed"
+    needs_install=true
+  fi
+
+  # Check for zplug
+  if dpkg -l | grep -q "ii  zplug "; then
+    log_info "- ✓ zplug is already installed"
+    needs_zplug=false
+  else
+    log_info "- ✗ zplug is not installed"
+    needs_zplug=true
+  fi
+
+  # Step 2: Install ZSH and zplug if needed
+  log_info "Step 2/5: Installing ZSH and zplug..."
+  if [ "$needs_install" = false ] && [ "$needs_zplug" = false ]; then
+    log_info "- ✓ Both ZSH and zplug are already installed"
+  else
+    install_packages=()
+
+    if [ "$needs_install" = true ]; then
+      install_packages+=("zsh")
+    fi
+
+    if [ "$needs_zplug" = true ]; then
+      install_packages+=("zplug")
+    fi
+
+    if [ ${#install_packages[@]} -gt 0 ]; then
+      log_info "- Installing: ${install_packages[*]}"
+      if ! apt install -y "${install_packages[@]}"; then
+        log_error "Failed to install: ${install_packages[*]}"
+        return 1
+      fi
+      log_info "- ✓ Successfully installed: ${install_packages[*]}"
+    fi
   fi
 
   # Verify installation
@@ -138,11 +246,21 @@ install_zsh() {
     log_error "ZSH installation verification failed"
     return 1
   else
-    log_success "ZSH installed successfully: $(zsh --version)"
+    zsh_version=$(zsh --version)
+    log_success "✓ ZSH installed successfully: $zsh_version"
   fi
 
-  # Create/overwrite .zshrc file
-  log_info "Creating/updating .zshrc configuration..."
+  # Step 3: Create/update .zshrc configuration
+  log_info "Step 3/5: Creating/updating .zshrc configuration..."
+
+  # Backup existing .zshrc if it exists
+  if [ -f "$ACTUAL_HOME/.zshrc" ]; then
+    backup_file="$ACTUAL_HOME/.zshrc.backup.$(date +%Y%m%d%H%M%S)"
+    log_info "- Backing up existing .zshrc to $backup_file"
+    cp "$ACTUAL_HOME/.zshrc" "$backup_file"
+  fi
+
+  log_info "- Writing new .zshrc configuration..."
   cat >"$ACTUAL_HOME/.zshrc" <<'EOL'
 # Set path if required 
 #export PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
@@ -173,15 +291,33 @@ zplug load
 zstyle ':completion::complete:*' use-cache on
 zstyle ':completion::complete:*' cache-path ~/.zsh/cache/$HOST
 EOL
+  log_info "- ✓ .zshrc configuration written successfully"
 
-  # Ensure correct ownership of the .zshrc file
+  # Step 4: Set correct file ownership
+  log_info "Step 4/5: Setting correct file ownership..."
   chown "$ACTUAL_USER:$ACTUAL_USER" "$ACTUAL_HOME/.zshrc"
+  log_info "- ✓ File ownership set to $ACTUAL_USER:$ACTUAL_USER"
 
-  # Change default shell for the user (will work even if already set)
-  log_info "Setting ZSH as the default shell for $ACTUAL_USER..."
-  chsh -s "$(command -v zsh)" "$ACTUAL_USER"
+  # Step 5: Set ZSH as default shell
+  log_info "Step 5/5: Setting ZSH as the default shell..."
+  current_shell=$(getent passwd "$ACTUAL_USER" | cut -d: -f7)
+  zsh_path=$(command -v zsh)
 
-  log_success "ZSH setup completed successfully"
+  if [ "$current_shell" = "$zsh_path" ]; then
+    log_info "- ✓ ZSH is already the default shell for $ACTUAL_USER"
+  else
+    log_info "- Changing default shell from $current_shell to $zsh_path"
+    if ! chsh -s "$zsh_path" "$ACTUAL_USER"; then
+      log_error "Failed to set ZSH as default shell"
+      return 1
+    fi
+    log_info "- ✓ ZSH set as default shell for $ACTUAL_USER"
+  fi
+
+  log_success "✅ ZSH setup completed successfully"
+  log_info "ZSH configuration includes: syntax highlighting, autosuggestions, history search, and completions"
+  log_info "To fully apply changes, please log out and log back in, or run: exec zsh"
+
   return 0
 }
 
@@ -189,49 +325,87 @@ EOL
 # Function to install Git and GitHub CLI
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 install_git() {
-  log_info "Installing/Reinstalling Git and GitHub CLI..."
+  log_info "Installing Git and GitHub CLI..."
 
-  # Install/Reinstall Git
-  log_info "Installing Git..."
-  if ! apt install --reinstall -y git; then
-    log_error "Failed to reinstall Git"
+  # Step 1: Check existing Git installation
+  log_info "Step 1/6: Checking Git installation..."
+  if command -v git >/dev/null 2>&1; then
+    current_git_version=$(git --version)
+    log_info "- Git is already installed: $current_git_version"
+    log_info "- Proceeding with Git update/reinstall to ensure latest version"
+  else
+    log_info "- Git is not installed, will install from repositories"
+  fi
+
+  # Step 2: Install/Reinstall Git
+  log_info "Step 2/6: Installing Git..."
+  if ! apt install -y git; then
+    log_error "Failed to install Git"
     return 1
   fi
 
   # Verify Git installation
-  if ! command -v git >/dev/null 2>&1; then
-    log_error "Git installation verification failed"
-    return 1
+  git_version=$(git --version)
+  log_success "✓ Git installed successfully: $git_version"
+
+  # Step 3: Check existing GitHub CLI installation
+  log_info "Step 3/6: Checking GitHub CLI installation..."
+  if command -v gh >/dev/null 2>&1; then
+    current_gh_version=$(gh --version | head -n 1)
+    log_info "- GitHub CLI is already installed: $current_gh_version"
+    log_info "- Will check for updates to ensure latest version"
   else
-    log_success "Git installed successfully: $(git --version)"
+    log_info "- GitHub CLI is not installed, will set up repository and install"
   fi
 
-  # Setup GitHub CLI repository keys (needed even for reinstall)
-  log_info "Setting up GitHub CLI repository..."
-  curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null
+  # Step 4: Setup GitHub CLI repository keys
+  log_info "Step 4/6: Setting up GitHub CLI repository..."
 
-  # Setup GitHub CLI repository
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+  # Check if keyring file already exists
+  if [ -f "/usr/share/keyrings/githubcli-archive-keyring.gpg" ]; then
+    log_info "- GitHub CLI keyring already exists"
+  else
+    log_info "- Downloading GitHub CLI repository key..."
+    if ! curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg; then
+      log_error "Failed to download GitHub CLI keyring"
+      return 1
+    fi
+    log_info "✓ GitHub CLI keyring installed successfully"
+  fi
 
-  # Update package lists
-  apt update -y
+  # Check if repository is already configured
+  if [ -f "/etc/apt/sources.list.d/github-cli.list" ]; then
+    log_info "- GitHub CLI repository already configured"
+  else
+    log_info "- Adding GitHub CLI repository to APT sources..."
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+    log_info "✓ GitHub CLI repository added successfully"
+  fi
 
-  # Install/Reinstall GitHub CLI
-  log_info "Installing GitHub CLI..."
-  if ! apt install --reinstall -y gh; then
-    log_error "Failed to reinstall GitHub CLI"
+  # Step 5: Update package lists
+  log_info "Step 5/6: Updating package lists..."
+  if ! apt update; then
+    log_error "Failed to update package lists"
+    return 1
+  fi
+  log_info "✓ Package lists updated successfully"
+
+  # Step 6: Install/Reinstall GitHub CLI
+  log_info "Step 6/6: Installing GitHub CLI..."
+  if ! apt install -y gh; then
+    log_error "Failed to install GitHub CLI"
     return 1
   fi
 
   # Verify GitHub CLI installation
-  if ! command -v gh >/dev/null 2>&1; then
-    log_error "GitHub CLI installation verification failed"
-    return 1
-  else
-    log_success "GitHub CLI installed successfully: $(gh --version)"
-  fi
+  gh_version=$(gh --version | head -n 1)
+  log_success "✓ GitHub CLI installed successfully: $gh_version"
 
-  log_success "Git and GitHub CLI reinstallation completed successfully"
+  # Display detailed version info
+  log_info "GitHub CLI details:"
+  gh --version
+
+  log_success "✅ Git and GitHub CLI installation completed successfully"
   return 0
 }
 
@@ -240,10 +414,46 @@ install_git() {
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 install_utilities() {
   log_info "Installing utilities (curl, wget, htop, iotop, tree, lsd)..."
-  if ! apt install -y --reinstall curl wget htop tree iotop lsd; then
-    log_error "Failed to install basic utilities"
-    return 1
+
+  # Step 1: Check what utilities are already installed
+  log_info "Step 1/2: Checking existing utility installations..."
+  utilities=("curl" "wget" "htop" "tree" "iotop" "lsd")
+  missing_utils=()
+
+  for util in "${utilities[@]}"; do
+    if command -v "$util" >/dev/null 2>&1; then
+      log_info "- ✓ $util is already installed: $($util --version 2>&1 | head -n 1)"
+    else
+      log_info "- ✗ $util is not installed"
+      missing_utils+=("$util")
+    fi
+  done
+
+  # Step 2: Install missing utilities
+  log_info "Step 2/2: Installing missing utilities..."
+  if [ ${#missing_utils[@]} -eq 0 ]; then
+    log_info "✓ All utilities are already installed"
+  else
+    log_info "- Installing: ${missing_utils[*]}"
+    if ! apt install -y "${missing_utils[@]}"; then
+      log_error "Failed to install utilities: ${missing_utils[*]}"
+      return 1
+    fi
+    log_info "✓ Successfully installed missing utilities"
   fi
+
+  # Verify all installations
+  log_info "Verifying utility installations:"
+  for util in "${utilities[@]}"; do
+    if command -v "$util" >/dev/null 2>&1; then
+      version=$($util --version 2>&1 | head -n 1)
+      log_info "- ✓ $util: $version"
+    else
+      log_error "- ✗ $util installation failed"
+    fi
+  done
+
+  log_info "✅ Utility installation completed successfully"
   return 0
 }
 
@@ -252,15 +462,70 @@ install_utilities() {
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 install_search_tools() {
   log_info "Installing search tools (fzf, ripgrep, fd)..."
-  if ! apt install -y --reinstall fzf ripgrep fd-find; then
-    log_error "Failed to install search tools"
-    return 1
+
+  # Step 1: Check what search tools are already installed
+  log_info "Step 1/3: Checking existing search tool installations..."
+  search_tools=("fzf" "ripgrep" "fd-find")
+  search_commands=("fzf" "rg" "fdfind")
+  missing_tools=()
+
+  for i in "${!search_tools[@]}"; do
+    tool="${search_tools[$i]}"
+    cmd="${search_commands[$i]}"
+
+    if command -v "$cmd" >/dev/null 2>&1; then
+      # Get version information when possible
+      if [ "$cmd" = "fzf" ]; then
+        version=$(fzf --version 2>&1)
+      elif [ "$cmd" = "rg" ]; then
+        version=$(rg --version 2>&1 | head -n 1)
+      elif [ "$cmd" = "fdfind" ]; then
+        version=$(fdfind --version 2>&1)
+      else
+        version="installed"
+      fi
+      log_info "- ✓ $tool is already installed: $version"
+    else
+      log_info "- ✗ $tool is not installed"
+      missing_tools+=("$tool")
+    fi
+  done
+
+  # Step 2: Install missing search tools
+  log_info "Step 2/3: Installing missing search tools..."
+  if [ ${#missing_tools[@]} -eq 0 ]; then
+    log_info "✓ All search tools are already installed"
+  else
+    log_info "- Installing: ${missing_tools[*]}"
+    if ! apt install -y "${missing_tools[@]}"; then
+      log_error "Failed to install search tools: ${missing_tools[*]}"
+      return 1
+    fi
+    log_info "✓ Successfully installed missing search tools"
   fi
 
-  # Add alias for fd to .zshrc if not already there
-  if ! grep -q "alias fd=fdfind" "$ACTUAL_HOME/.zshrc"; then
+  # Step 3: Set up fd alias if needed
+  log_info "Step 3/3: Setting up fd alias..."
+  if grep -q "alias fd=fdfind" "$ACTUAL_HOME/.zshrc"; then
+    log_info "- ✓ fd alias already exists in .zshrc"
+  else
+    log_info "- Adding fd alias to .zshrc"
     echo "alias fd=fdfind" >>"$ACTUAL_HOME/.zshrc"
+    log_info "✓ fd alias added successfully"
   fi
+
+  # Verify all installations
+  log_info "Verifying search tool installations:"
+  for i in "${!search_tools[@]}"; do
+    cmd="${search_commands[$i]}"
+    if command -v "$cmd" >/dev/null 2>&1; then
+      log_info "- ✓ ${search_tools[$i]} is installed"
+    else
+      log_error "- ✗ ${search_tools[$i]} installation failed"
+    fi
+  done
+
+  log_info "✅ Search tools installation completed successfully"
   return 0
 }
 
@@ -270,52 +535,72 @@ install_search_tools() {
 install_lua() {
   log_info "Setting up Lua 5.1 and LuaJIT..."
 
-  # Check if Lua and LuaJIT are already installed
+  # Step 1: Check if Lua and LuaJIT are already installed
+  log_info "Step 1/5: Checking existing Lua installations..."
   local lua_installed=false
   local luajit_installed=false
 
   if dpkg -l | grep -q "lua5.1"; then
     lua_installed=true
-    log_info "Lua 5.1 is already installed, will reinstall"
+    log_info "- Lua 5.1 is already installed, will reinstall"
+  else
+    log_info "- Lua 5.1 is not installed, will install new"
   fi
 
   if dpkg -l | grep -q "luajit"; then
     luajit_installed=true
-    log_info "LuaJIT is already installed, will reinstall"
+    log_info "- LuaJIT is already installed, will reinstall"
+  else
+    log_info "- LuaJIT is not installed, will install new"
   fi
 
-  # Clean up custom installations only if they exist
+  # Step 2: Clean up custom installations if they exist
+  log_info "Step 2/5: Cleaning up any existing custom Lua installations..."
+
   if [ -d "/usr/local/bin/lua" ]; then
-    log_info "Removing custom Lua installation from /usr/local/bin/lua"
+    log_info "- Removing custom Lua installation from /usr/local/bin/lua"
     rm -rf /usr/local/bin/lua*
+  else
+    log_info "- No custom Lua binary found in /usr/local/bin"
   fi
 
   if [ -d "/usr/local/bin/luajit" ]; then
-    log_info "Removing custom LuaJIT installation from /usr/local/bin/luajit"
+    log_info "- Removing custom LuaJIT installation from /usr/local/bin/luajit"
     rm -rf /usr/local/bin/luajit*
+  else
+    log_info "- No custom LuaJIT binary found in /usr/local/bin"
   fi
 
   if [ -d "/usr/local/include/lua" ]; then
-    log_info "Removing custom Lua headers from /usr/local/include/lua"
+    log_info "- Removing custom Lua headers from /usr/local/include/lua"
     rm -rf /usr/local/include/lua*
+  else
+    log_info "- No custom Lua headers found in /usr/local/include"
   fi
 
   if [ -d "/usr/local/lib/lua" ]; then
-    log_info "Removing custom Lua libraries from /usr/local/lib/lua"
+    log_info "- Removing custom Lua libraries from /usr/local/lib/lua"
     rm -rf /usr/local/lib/lua*
+  else
+    log_info "- No custom Lua libraries found in /usr/local/lib"
   fi
 
-  # Add buster repository temporarily for Lua 5.1 if needed
+  # Step 3: Add buster repository temporarily for Lua 5.1 if needed
+  log_info "Step 3/5: Setting up Debian repository for Lua packages..."
   if ! grep -q "deb http://deb.debian.org/debian buster main" /etc/apt/sources.list; then
-    log_info "Adding Debian Buster repository for Lua 5.1"
+    log_info "- Adding Debian Buster repository for Lua 5.1"
     echo "# Add Buster repository for Lua 5.1" >>/etc/apt/sources.list
     echo "deb http://deb.debian.org/debian buster main" >>/etc/apt/sources.list
-    apt update -y >/dev/null 2>&1
+    log_info "- Updating package lists..."
+    apt update -y
+    log_info "- Package lists updated successfully"
+  else
+    log_info "- Buster repository already configured"
   fi
 
-  # Install or reinstall Lua and LuaJIT as needed
+  # Step 4: Install or reinstall Lua and LuaJIT as needed
+  log_info "Step 4/5: Installing Lua packages..."
   local install_cmd="apt install -y"
-
   if $lua_installed; then
     install_cmd+=" --reinstall lua5.1"
   else
@@ -328,17 +613,29 @@ install_lua() {
     install_cmd+=" luajit"
   fi
 
-  log_info "Installing/reinstalling Lua packages with: $install_cmd"
+  log_info "- Running: $install_cmd"
   if ! eval "$install_cmd"; then
     log_error "Failed to install Lua packages"
     return 1
   fi
+  log_info "- Lua packages installed successfully"
 
-  # Comment out the buster line to avoid issues
+  # Step 5: Clean up repository configuration
+  log_info "Step 5/5: Cleaning up repository configuration..."
   sed -i 's/^deb http:\/\/deb.debian.org\/debian buster main/# deb http:\/\/deb.debian.org\/debian buster main/' /etc/apt/sources.list
-  apt update -y >/dev/null 2>&1
+  log_info "- Buster repository commented out in sources.list"
 
-  log_info "Lua installation completed successfully"
+  log_info "- Updating package lists after cleanup..."
+  apt update -y
+  log_info "- Package lists updated successfully"
+
+  # Show installed versions
+  lua_version=$(lua5.1 -v 2>/dev/null || echo "Not found")
+  luajit_version=$(luajit -v 2>/dev/null || echo "Not found")
+  log_info "Installed Lua version: $lua_version"
+  log_info "Installed LuaJIT version: $luajit_version"
+
+  log_info "✅ Lua installation completed successfully!"
   return 0
 }
 
@@ -348,20 +645,24 @@ install_lua() {
 install_luarocks() {
   log_info "Installing LuaRocks 3.11.1..."
 
-  # First, ensure lua5.1-dev is installed which provides the needed include files
-  log_info "Installing Lua development packages..."
+  # Step 1: Install Lua development packages
+  log_info "Step 1/8: Installing Lua development packages..."
   if ! apt install -y lua5.1-dev; then
     log_error "Failed to install lua5.1-dev package"
     return 1
   fi
+  log_info "✓ Lua development packages installed successfully"
 
-  # Verify the include directory exists
+  # Step 2: Verify the include directory exists
+  log_info "Step 2/8: Verifying Lua include directory..."
   if [ ! -d "/usr/include/lua5.1" ]; then
     log_error "Lua include directory is still missing after installing lua5.1-dev"
     return 1
   fi
+  log_info "✓ Lua include directory verified at /usr/include/lua5.1"
 
-  # Create a temporary directory with a specific name to avoid conflicts
+  # Step 3: Create a temporary directory with a specific name to avoid conflicts
+  log_info "Step 3/8: Creating temporary directory for installation..."
   TEMP_DIR="$HOME/luarocks_install_tmp"
   mkdir -p "$TEMP_DIR"
 
@@ -370,22 +671,25 @@ install_luarocks() {
     log_error "Failed to create/navigate to temporary directory"
     return 1
   }
+  log_info "✓ Created temporary directory at $TEMP_DIR"
 
-  # Download LuaRocks with error checking
-  log_info "Downloading LuaRocks..."
-  if ! wget -q https://luarocks.org/releases/luarocks-3.11.1.tar.gz; then
+  # Step 4: Download LuaRocks with error checking
+  log_info "Step 4/8: Downloading LuaRocks 3.11.1..."
+  if ! wget --show-progress https://luarocks.org/releases/luarocks-3.11.1.tar.gz; then
     log_error "Failed to download LuaRocks"
     cd "$HOME" && rm -rf "$TEMP_DIR"
     return 1
   fi
+  log_info "✓ Downloaded LuaRocks 3.11.1 successfully"
 
-  # Extract with error checking
-  log_info "Extracting LuaRocks..."
-  if ! tar zxpf luarocks-3.11.1.tar.gz; then
+  # Step 5: Extract with error checking
+  log_info "Step 5/8: Extracting LuaRocks..."
+  if ! tar zxvf luarocks-3.11.1.tar.gz; then
     log_error "Failed to extract LuaRocks"
     cd "$HOME" && rm -rf "$TEMP_DIR"
     return 1
   fi
+  log_info "✓ Extracted LuaRocks archive successfully"
 
   # Navigate to the extracted directory
   if ! cd "luarocks-3.11.1"; then
@@ -394,22 +698,30 @@ install_luarocks() {
     return 1
   fi
 
-  # Configure and install with error checking
+  # Step 6: Configure and install build dependencies
+  log_info "Step 6/8: Installing build dependencies..."
+  if ! apt install -y build-essential libreadline-dev; then
+    log_error "Failed to install build dependencies"
+    cd "$HOME" && rm -rf "$TEMP_DIR"
+    return 1
+  fi
+
   log_info "Configuring LuaRocks..."
-  # Add --with-lua option and make sure build-essential is installed
-  apt install -y build-essential libreadline-dev
   if ! ./configure --with-lua=/usr --with-lua-include=/usr/include/lua5.1; then
     log_error "Failed to configure LuaRocks"
     cd "$HOME" && rm -rf "$TEMP_DIR"
     return 1
   fi
+  log_info "✓ LuaRocks configured successfully"
 
-  log_info "Building LuaRocks..."
+  # Step 7: Build and install
+  log_info "Step 7/8: Building LuaRocks (this may take a minute)..."
   if ! make; then
     log_error "Failed to build LuaRocks"
     cd "$HOME" && rm -rf "$TEMP_DIR"
     return 1
   fi
+  log_info "✓ LuaRocks built successfully"
 
   log_info "Installing LuaRocks..."
   if ! make install; then
@@ -417,21 +729,28 @@ install_luarocks() {
     cd "$HOME" && rm -rf "$TEMP_DIR"
     return 1
   fi
+  log_info "✓ LuaRocks installed to system path"
 
+  # Step 8: Verify and clean up
+  log_info "Step 8/8: Verifying installation and cleaning up..."
   # Check if LuaRocks is installed correctly
   if ! command -v luarocks >/dev/null 2>&1; then
     log_error "LuaRocks installation completed but the 'luarocks' command is not available in PATH"
   else
-    log_info "LuaRocks installed successfully"
+    log_info "✓ LuaRocks command available in PATH"
   fi
 
   # Clean up
+  log_info "Cleaning up temporary files..."
   cd "$HOME" || true
   rm -rf "$TEMP_DIR"
+  log_info "✓ Temporary files removed"
 
-  # Final verification
+  # Final verification with version display
   if command -v luarocks >/dev/null 2>&1; then
-    log_info "LuaRocks version: $(luarocks --version)"
+    luarocks_version=$(luarocks --version)
+    log_info "✅ LuaRocks installation successful!"
+    log_info "LuaRocks version: $luarocks_version"
     return 0
   else
     log_error "LuaRocks installation failed"
@@ -445,96 +764,151 @@ install_luarocks() {
 install_nvm_node() {
   log_info "Setting up Node.js environment..."
 
-  # Check if NVM is installed and remove it
+  # Step 1: Check and remove existing NVM installation
+  log_info "Step 1/7: Checking for existing NVM installation..."
   if [ -d "$ACTUAL_HOME/.nvm" ]; then
-    log_info "Removing existing NVM installation..."
+    log_info "- Existing NVM installation found"
+    log_info "- Uninstalling existing Node.js versions..."
+
     su - "$ACTUAL_USER" -c "
       # Uninstall any existing node versions
       if command -v nvm &>/dev/null; then
+        echo '  > Activating default Node.js version'
         nvm use default
+        echo '  > Deactivating NVM'
         nvm deactivate
+        echo '  > Uninstalling LTS version'
         nvm uninstall --lts
+        echo '  > Uninstalling default version'
         nvm uninstall default
+        echo '  > Uninstalling all remaining versions'
         nvm uninstall node
       fi
     "
 
-    # Remove NVM directory
+    log_info "- Removing NVM directory..."
     rm -rf "$ACTUAL_HOME/.nvm"
 
-    # Remove NVM entries from shell config files
+    log_info "- Cleaning NVM entries from shell configuration files..."
     for config_file in "$ACTUAL_HOME/.bashrc" "$ACTUAL_HOME/.zshrc" "$ACTUAL_HOME/.profile"; do
       if [ -f "$config_file" ]; then
+        log_info "  > Cleaning $config_file"
         sed -i '/NVM_DIR/d' "$config_file"
         sed -i '/nvm.sh/d' "$config_file"
         sed -i '/bash_completion/d' "$config_file"
       fi
     done
+    log_info "✓ Previous NVM installation completely removed"
+  else
+    log_info "- No existing NVM installation found"
   fi
 
-  # Clean npm and pnpm caches if they exist
-  log_info "Cleaning package manager caches..."
+  # Step 2: Clean package manager caches
+  log_info "Step 2/7: Cleaning package manager caches..."
   su - "$ACTUAL_USER" -c "
     if command -v npm &>/dev/null; then
+      echo '  > Cleaning npm cache'
       npm cache clean --force
     fi
     
     if command -v pnpm &>/dev/null; then
+      echo '  > Pruning pnpm store'
       pnpm store prune
     fi
   "
+  log_info "✓ Package manager caches cleaned"
 
-  # Remove any globally installed Node.js
+  # Step 3: Remove system Node.js packages
+  log_info "Step 3/7: Removing system Node.js packages if they exist..."
   if command -v apt &>/dev/null; then
-    log_info "Removing system Node.js packages if they exist..."
     apt purge -y nodejs npm
     apt autoremove -y
+    log_info "✓ System Node.js packages removed"
+  else
+    log_info "- APT not found, skipping system package removal"
   fi
 
-  # Install NVM
-  log_info "Installing NVM and Node.js 20.10.0..."
-  su - "$ACTUAL_USER" -c "curl -s -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash"
+  # Step 4: Install NVM
+  log_info "Step 4/7: Installing NVM v0.39.7..."
+  log_info "- Downloading and running NVM install script..."
+  su - "$ACTUAL_USER" -c "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash"
 
-  # Update .zshrc with NVM setup if not already there
+  log_info "- Verifying NVM installation..."
+  if [ -d "$ACTUAL_HOME/.nvm" ]; then
+    log_info "✓ NVM installed successfully"
+  else
+    log_error "! NVM installation failed - directory not found"
+    return 1
+  fi
+
+  # Step 5: Update shell configuration
+  log_info "Step 5/7: Updating shell configuration for NVM..."
   if ! grep -q "export NVM_DIR" "$ACTUAL_HOME/.zshrc"; then
+    log_info "- Adding NVM configuration to .zshrc"
     cat >>"$ACTUAL_HOME/.zshrc" <<'EOL'
 # NVM Setup
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
 EOL
+    log_info "✓ NVM configuration added to .zshrc"
+  else
+    log_info "- NVM configuration already exists in .zshrc"
   fi
 
-  # Install specific Node.js version and set it as default
-  log_info "Installing Node.js 20.10.0..."
-  su - "$ACTUAL_USER" -c "
+  # Step 6: Install Node.js
+  log_info "Step 6/7: Installing Node.js 20.10.0 (this may take a minute)..."
+  if ! su - "$ACTUAL_USER" -c "
     export NVM_DIR=\"\$HOME/.nvm\"
     [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
+    echo '  > Installing Node.js 20.10.0'
     nvm install 20.10.0
+    echo '  > Setting Node.js 20.10.0 as active version'
     nvm use 20.10.0
+    echo '  > Setting Node.js 20.10.0 as default version'
     nvm alias default 20.10.0
-  " || {
+    echo '  > Node.js version:' 
+    node -v
+    echo '  > NPM version:'
+    npm -v
+  "; then
     log_error "Failed to install Node.js 20.10.0"
     return 1
-  }
+  fi
+  log_info "✓ Node.js 20.10.0 installed and set as default"
 
-  # Install pnpm globally
-  log_info "Installing pnpm globally..."
+  # Step 7: Install global packages
+  log_info "Step 7/7: Installing global packages..."
+
+  log_info "- Installing pnpm globally..."
   su - "$ACTUAL_USER" -c "
     export NVM_DIR=\"\$HOME/.nvm\"
     [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
     npm i -g pnpm
+    echo '  > PNPM version:'
+    pnpm --version
   "
+  log_info "✓ PNPM installed globally"
 
-  # Install neovim support
-  log_info "Installing neovim support..."
+  log_info "- Installing neovim support..."
   su - "$ACTUAL_USER" -c "
     export NVM_DIR=\"\$HOME/.nvm\"
     [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
     npm install -g neovim
   "
+  log_info "✓ Neovim support installed"
 
-  log_info "Node.js 20.10.0 installation completed successfully"
+  # Show final versions
+  log_info "Installed versions:"
+  su - "$ACTUAL_USER" -c "
+    export NVM_DIR=\"\$HOME/.nvm\"
+    [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
+    echo ' - Node.js: $(node -v)'
+    echo ' - NPM: $(npm -v)'
+    echo ' - PNPM: $(pnpm --version)'
+  "
+
+  log_info "✅ Node.js environment setup completed successfully!"
   return 0
 }
 
@@ -585,60 +959,139 @@ EOL
 install_docker() {
   print_section "Installing Docker"
 
-  # Check if Docker is already installed
+  # Step 1: Check if Docker is already installed
+  echo "Step 1/8: Checking for existing Docker installation..."
   if command -v docker &>/dev/null; then
-    echo "Docker is already installed. Skipping installation."
+    echo "✓ Docker is already installed. Skipping installation."
+    docker --version
     return 0
   fi
+  echo "- No existing Docker installation found, proceeding with install"
 
-  # Install dependencies
-  echo "Installing Docker dependencies..."
-  sudo apt-get update
-  sudo apt-get install -y \
-    ca-certificates \
-    curl \
-    gnupg \
-    lsb-release
-
-  # Create directory for Docker's GPG key
-  sudo mkdir -p "/etc/apt/keyrings"
-
-  # Download Docker's GPG key
-  curl -fsSL "https://download.docker.com/linux/ubuntu/gpg" | sudo gpg --dearmor -o "/etc/apt/keyrings/docker.gpg"
-
-  # Set correct permissions
-  sudo chmod a+r "/etc/apt/keyrings/docker.gpg"
-
-  # Add Docker repository
-  echo \
-    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-    $(lsb_release -cs) stable" | sudo tee "/etc/apt/sources.list.d/docker.list" >/dev/null
-
-  # Update package lists
+  # Step 2: Install dependencies only if they don't exist
+  echo "Step 2/8: Checking and installing Docker prerequisites..."
+  echo "- Updating package lists..."
   sudo apt-get update
 
-  # Check if apt-get update succeeded
+  echo "- Checking for required packages..."
+  dependencies=("ca-certificates" "curl" "gnupg" "lsb-release")
+  missing_deps=()
+
+  for dep in "${dependencies[@]}"; do
+    if ! dpkg -l | grep -q "ii  $dep "; then
+      missing_deps+=("$dep")
+    else
+      echo "  ✓ $dep is already installed"
+    fi
+  done
+
+  if [ ${#missing_deps[@]} -gt 0 ]; then
+    echo "- Installing missing packages: ${missing_deps[*]}"
+    sudo apt-get install -y "${missing_deps[@]}"
+    echo "✓ Missing prerequisites installed"
+  else
+    echo "✓ All prerequisites are already installed"
+  fi
+
+  # Step 3: Set up Docker's GPG key
+  echo "Step 3/8: Setting up Docker repository..."
+  echo "- Checking if Docker's GPG key already exists..."
+  if [ -f "/etc/apt/keyrings/docker.gpg" ]; then
+    echo "  ✓ Docker GPG key already exists"
+  else
+    echo "- Creating directory for Docker's GPG key..."
+    sudo mkdir -p "/etc/apt/keyrings"
+
+    echo "- Downloading and installing Docker's GPG key..."
+    curl -fsSL "https://download.docker.com/linux/ubuntu/gpg" | sudo gpg --dearmor -o "/etc/apt/keyrings/docker.gpg"
+
+    echo "- Setting correct permissions for the GPG key..."
+    sudo chmod a+r "/etc/apt/keyrings/docker.gpg"
+    echo "✓ Docker GPG key configured successfully"
+  fi
+
+  # Step 4: Add Docker repository if not already added
+  echo "Step 4/8: Checking Docker repository in APT sources..."
+  if [ -f "/etc/apt/sources.list.d/docker.list" ]; then
+    echo "✓ Docker repository already configured"
+  else
+    echo "- Adding Docker repository to APT sources..."
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+      $(lsb_release -cs) stable" | sudo tee "/etc/apt/sources.list.d/docker.list" >/dev/null
+    echo "✓ Docker repository added"
+  fi
+
+  # Step 5: Update package lists with new repository
+  echo "Step 5/8: Updating package lists with Docker repository..."
   if ! sudo apt-get update; then
-    echo "Failed to update package lists. Docker installation aborted."
+    echo "❌ Failed to update package lists. Docker installation aborted."
     return 1
   fi
+  echo "✓ Package lists updated successfully"
 
-  # Install Docker packages
-  echo "Installing Docker Engine and related tools..."
-  if ! sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin; then
-    echo "Failed to install Docker packages. Installation aborted."
-    return 1
+  # Step 6: Install Docker packages, checking for each one
+  echo "Step 6/8: Checking and installing Docker packages..."
+  docker_packages=("docker-ce" "docker-ce-cli" "containerd.io" "docker-compose-plugin")
+  missing_packages=()
+
+  for pkg in "${docker_packages[@]}"; do
+    if ! dpkg -l | grep -q "ii  $pkg "; then
+      missing_packages+=("$pkg")
+    else
+      echo "  ✓ $pkg is already installed"
+    fi
+  done
+
+  if [ ${#missing_packages[@]} -gt 0 ]; then
+    echo "- Installing missing Docker packages: ${missing_packages[*]} (this may take a few minutes)..."
+    if ! sudo apt-get install -y "${missing_packages[@]}"; then
+      echo "❌ Failed to install Docker packages. Installation aborted."
+      return 1
+    fi
+    echo "✓ Docker packages installed successfully"
+  else
+    echo "✓ All Docker packages are already installed"
   fi
 
-  # Add current user to docker group to run docker without sudo
-  echo "Adding user to the docker group..."
-  if ! sudo usermod -aG docker "$USER"; then
-    echo "Failed to add user to docker group. You may need to run Docker with sudo."
+  # Step 7: Add current user to docker group if not already a member
+  echo "Step 7/8: Checking if user is in docker group..."
+  if groups "$USER" | grep -q "\bdocker\b"; then
+    echo "✓ User $USER is already in the docker group"
+  else
+    echo "- Adding user to the docker group..."
+    if ! sudo usermod -aG docker "$USER"; then
+      echo "⚠️ Failed to add user to docker group. You may need to run Docker with sudo."
+    else
+      echo "✓ User added to docker group"
+    fi
   fi
 
-  echo "Docker has been successfully installed!"
-  echo "You will need to log out and back in for the group changes to take effect."
+  # Step 8: Verify installation
+  echo "Step 8/8: Verifying Docker installation..."
+  if command -v docker &>/dev/null; then
+    docker_version=$(docker --version)
+    echo "✓ Docker installed successfully: $docker_version"
+
+    # Check if docker compose is installed
+    if command -v docker-compose &>/dev/null; then
+      compose_version=$(docker-compose --version)
+      echo "✓ Docker Compose installed: $compose_version"
+    elif command -v docker &>/dev/null && docker compose version &>/dev/null; then
+      compose_version=$(docker compose version)
+      echo "✓ Docker Compose plugin installed: $compose_version"
+    else
+      echo "⚠️ Docker Compose not found. You may need to install it separately."
+    fi
+  else
+    echo "⚠️ Docker installation may have failed. 'docker' command not found."
+  fi
+
+  echo "✅ Docker installation completed!"
+  echo "NOTE: You will need to log out and back in for the docker group changes to take effect."
   echo "After logging back in, you can test Docker with: docker run hello-world"
+
+  return 0
 }
 
 #-----------------------------------------------------------------------------------------------------------------------------------------------
@@ -646,95 +1099,113 @@ install_docker() {
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 install_python_poetry() {
   log_info "Installing Poetry and Python 3.12.3..."
+
   # Install Python dependencies
+  log_info "Step 1/10: Installing Python build dependencies..."
   apt install -y build-essential libssl-dev zlib1g-dev libncurses5-dev libnss3-dev libreadline-dev libffi-dev libsqlite3-dev wget libbz2-dev libgdbm-dev libdb-dev liblzma-dev tk-dev uuid-dev
+
   # Download and extract Python
   cd /tmp || return 1
-  if ! wget -q https://www.python.org/ftp/python/3.12.3/Python-3.12.3.tgz; then
+  log_info "Step 2/10: Downloading Python 3.12.3..."
+  if ! wget -q --show-progress https://www.python.org/ftp/python/3.12.3/Python-3.12.3.tgz; then
     log_error "Failed to download Python 3.12.3"
     return 1
   fi
 
+  log_info "Step 3/10: Extracting Python source code..."
   if ! tar -xf Python-3.12.3.tgz; then
     log_error "Failed to extract Python 3.12.3"
     return 1
   fi
 
   cd Python-3.12.3 || return 1
+
   # Configure and install
-  if ! ./configure --enable-optimizations >/dev/null 2>&1; then
+  log_info "Step 4/10: Configuring Python build (this may take a few minutes)..."
+  if ! ./configure --enable-optimizations; then
     log_error "Failed to configure Python 3.12.3"
     return 1
   fi
 
-  if ! make -j"$(nproc)" >/dev/null 2>&1; then
+  log_info "Step 5/10: Compiling Python (this will take several minutes)..."
+  if ! make -j"$(nproc)"; then
     log_error "Failed to make Python 3.12.3"
     return 1
   fi
 
-  if ! make altinstall >/dev/null 2>&1 || ! command -v python3.12 >/dev/null 2>&1; then
+  log_info "Step 6/10: Installing Python 3.12.3..."
+  if ! make altinstall || ! command -v python3.12 >/dev/null 2>&1; then
     log_error "Failed to install Python 3.12.3"
     return 1
   fi
 
-  # Create Python alias in .zshrc if not already there
-  if ! grep -q "alias python=python3.12" "$ACTUAL_HOME/.zshrc"; then
-    cat >>"$ACTUAL_HOME/.zshrc" <<'EOL'
-# Python alias
-alias python=python3.12
-EOL
-  fi
+  # Removed the alias section
 
   # Install pip for system Python
+  log_info "Step 7/9: Installing pip for system Python..."
   if ! apt install -y python3-pip; then
     log_error "Failed to install system Python pip"
     return 1
   fi
 
   # Install pip for Python 3.12 if not already installed with Python
+  log_info "Step 8/9: Ensuring pip is installed for Python 3.12..."
   if ! python3.12 -m ensurepip; then
     log_error "Failed to ensure pip for Python 3.12"
     return 1
   fi
 
   # Install virtualenv
-  if ! python3.12 -m pip install virtualenv >/dev/null 2>&1; then
+  log_info "Installing virtualenv for Python 3.12..."
+  if ! python3.12 -m pip install virtualenv; then
     log_error "Failed to install virtualenv"
     return 1
   fi
 
   # Install neovim support globally
-  if ! python3.12 -m pip install pynvim >/dev/null 2>&1; then
+  log_info "Installing pynvim for neovim support..."
+  if ! python3.12 -m pip install pynvim; then
     log_error "Failed to install pynvim (neovim support)"
     return 1
   fi
 
   # Install Poetry
+  log_info "Step 9/9: Installing Poetry (this may take a few minutes)..."
   if ! su - "$ACTUAL_USER" -c "curl -sSL https://install.python-poetry.org | python3.12 -"; then
     log_error "Failed to install Poetry"
     return 1
   fi
 
   # Add Poetry to PATH in .zshrc if not already there
+  log_info "Setting up Poetry path..."
   if ! grep -q "\$HOME/.local/bin" "$ACTUAL_HOME/.zshrc"; then
     cat >>"$ACTUAL_HOME/.zshrc" <<'EOL'
 # Add Poetry to PATH
 export PATH=$HOME/.local/bin:$PATH
 EOL
+    log_info "Poetry path added to .zshrc"
+  else
+    log_info "Poetry path already exists in .zshrc"
   fi
 
   # Clean up
+  log_info "Cleaning up temporary files..."
   cd /tmp || return 1
   rm -rf Python-3.12.3*
+
+  log_info "✅ Python 3.12.3 and Poetry installation completed successfully!"
+  log_info "To use Python 3.12, run: python3.12"
+  log_info "To use pip for Python 3.12, run: python3.12 -m pip"
   return 0
 }
-
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 # Function to install tmux
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 install_tmux() {
   log_info "Installing tmux 3.5a from source..."
+
   # Install dependencies
+  log_info "Step 1/7: Installing tmux dependencies..."
   if ! apt install -y git automake build-essential pkg-config libevent-dev libncurses5-dev bison; then
     log_error "Failed to install tmux dependencies"
     return 1
@@ -742,38 +1213,45 @@ install_tmux() {
 
   # Clone and build tmux
   cd /tmp || return 1
+  log_info "Step 2/7: Cloning tmux repository..."
   if ! git clone https://github.com/tmux/tmux.git; then
     log_error "Failed to clone tmux repository"
     return 1
   fi
 
   cd tmux || return 1
+  log_info "Step 3/7: Checking out tmux version 3.5a..."
   if ! git checkout 3.5a; then
     log_error "Failed to checkout tmux version 3.5a"
     return 1
   fi
 
-  if ! sh autogen.sh >/dev/null 2>&1; then
+  log_info "Step 4/7: Running autogen.sh..."
+  if ! sh autogen.sh; then
     log_error "Failed to run autogen.sh for tmux"
     return 1
   fi
 
-  if ! ./configure >/dev/null 2>&1; then
+  log_info "Step 5/7: Configuring tmux build..."
+  if ! ./configure; then
     log_error "Failed to configure tmux"
     return 1
   fi
 
-  if ! make >/dev/null 2>&1; then
+  log_info "Step 6/7: Compiling tmux (this may take a few minutes)..."
+  if ! make; then
     log_error "Failed to make tmux"
     return 1
   fi
 
-  if ! make install >/dev/null 2>&1 || ! command -v tmux >/dev/null 2>&1; then
+  log_info "Step 7/7: Installing tmux..."
+  if ! make install || ! command -v tmux >/dev/null 2>&1; then
     log_error "Failed to install tmux"
     return 1
   fi
 
   # Create basic tmux config
+  log_info "Creating tmux configuration file..."
   if [ ! -f "$ACTUAL_HOME/.tmux.conf" ]; then
     cat >"$ACTUAL_HOME/.tmux.conf" <<'EOL'
 # Improve colors
@@ -806,11 +1284,17 @@ set-option -g allow-rename off
 set -g history-limit 50000
 EOL
     chown "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/.tmux.conf"
+    log_info "Created tmux configuration file at $ACTUAL_HOME/.tmux.conf"
+  else
+    log_info "Tmux configuration file already exists at $ACTUAL_HOME/.tmux.conf"
   fi
 
   # Clean up
+  log_info "Cleaning up temporary files..."
   cd /tmp || return 1
   rm -rf tmux
+
+  log_info "✅ Tmux 3.5a installation completed successfully!"
   return 0
 }
 
@@ -874,30 +1358,42 @@ install_go() {
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 install_neovim() {
   log_info "Installing Neovim v0.11.1..."
+
   # Make sure tar is installed
+  log_info "Step 1/10: Installing required packages..."
   if ! apt install -y tar gzip; then
     log_error "Failed to install tar and gzip"
     return 1
   fi
+
   # Create Neovim directory in user's home
+  log_info "Step 2/10: Creating Neovim directory..."
   NVIM_DIR="$ACTUAL_HOME/nvim-linux-x86_64"
   mkdir -p "$NVIM_DIR"
+
   # Download Neovim 0.11.1
   cd /tmp || return 1
-  if ! wget -q https://github.com/neovim/neovim/releases/download/v0.11.1/nvim-linux-x86_64.tar.gz; then
+  log_info "Step 3/10: Downloading Neovim v0.11.1..."
+  if ! wget --show-progress https://github.com/neovim/neovim/releases/download/v0.11.1/nvim-linux-x86_64.tar.gz; then
     log_error "Failed to download Neovim"
     return 1
   fi
+
   # Extract to user's home
-  if ! tar xzvf nvim-linux-x86_64.tar.gz -C "$ACTUAL_HOME" >/dev/null 2>&1; then
+  log_info "Step 4/10: Extracting Neovim..."
+  if ! tar xzvf nvim-linux-x86_64.tar.gz -C "$ACTUAL_HOME"; then
     log_error "Failed to extract Neovim"
     return 1
   fi
+
+  log_info "Setting permissions for Neovim directory..."
   if ! chown -R "$ACTUAL_USER":"$ACTUAL_USER" "$NVIM_DIR"; then
     log_error "Failed to set ownership for Neovim directory"
     return 1
   fi
+
   # Add Neovim to PATH in .zshrc if not already there
+  log_info "Step 5/10: Updating shell configuration..."
   if ! grep -q "alias nvim=" "$ACTUAL_HOME/.zshrc"; then
     # Fix: Using different delimiter (|) for sed since the path contains forward slashes
     if ! sed -i "s|alias ec=\"sudo nvim ~/\.zshrc\"|alias ec=\"sudo $NVIM_DIR/bin/nvim ~/\.zshrc\"|" "$ACTUAL_HOME/.zshrc"; then
@@ -906,45 +1402,70 @@ install_neovim() {
     cat >>"$ACTUAL_HOME/.zshrc" <<EOL
 alias nvim='$NVIM_DIR/bin/nvim'
 EOL
+    log_info "Added Neovim alias to .zshrc"
+  else
+    log_info "Neovim alias already exists in .zshrc"
   fi
+
   # Install tree-sitter
   cd /tmp || return 1
-  if ! wget -q https://github.com/tree-sitter/tree-sitter/releases/download/v0.20.8/tree-sitter-linux-x64.gz; then
+  log_info "Step 6/10: Downloading tree-sitter..."
+  if ! wget --show-progress https://github.com/tree-sitter/tree-sitter/releases/download/v0.20.8/tree-sitter-linux-x64.gz; then
     log_error "Failed to download tree-sitter"
     return 1
   fi
+
+  log_info "Step 7/10: Extracting and installing tree-sitter..."
   if ! gunzip tree-sitter-linux-x64.gz; then
     log_error "Failed to extract tree-sitter"
     return 1
   fi
+
   if ! mv tree-sitter-linux-x64 /usr/local/bin/tree-sitter; then
     log_error "Failed to move tree-sitter to /usr/local/bin"
     return 1
   fi
+
   if ! chmod +x /usr/local/bin/tree-sitter; then
     log_error "Failed to make tree-sitter executable"
     return 1
   fi
+
   # Install Neovim Python support
-  if ! python3.12 -m pip install neovim >/dev/null 2>&1; then
+  log_info "Step 8/10: Installing Neovim Python support..."
+  if ! python3.12 -m pip install neovim; then
     log_error "Failed to install Neovim Python support"
     return 1
   fi
+
   # Create directories for LazyVim
+  log_info "Step 9/10: Creating Neovim configuration directory..."
   mkdir -p "$ACTUAL_HOME/.config"
+
   # Clone LazyVim starter
+  log_info "Step 10/10: Setting up LazyVim configuration..."
   if [ ! -d "$ACTUAL_HOME/.config/nvim" ]; then
+    log_info "Cloning LazyVim starter repository..."
     if ! su - "$ACTUAL_USER" -c "git clone https://github.com/LazyVim/starter ~/.config/nvim"; then
       log_error "Failed to clone LazyVim starter"
       return 1
     fi
+
+    log_info "Removing git repository from LazyVim starter..."
     if ! su - "$ACTUAL_USER" -c "rm -rf ~/.config/nvim/.git"; then
       log_error "Failed to remove .git directory from LazyVim starter"
       # Not returning 1 here as this is not critical
     fi
+  else
+    log_info "LazyVim configuration already exists"
   fi
+
   # Clean up
+  log_info "Cleaning up temporary files..."
   rm -f /tmp/nvim-linux-x86_64.tar.gz
+
+  log_info "✅ Neovim v0.11.1 installation completed successfully!"
+  log_info "You can start Neovim by typing 'nvim' in your terminal after reloading your shell."
   return 0
 }
 
@@ -953,29 +1474,38 @@ EOL
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 configure_ssh_priority() {
   log_info "Configuring SSH with real-time priority..."
-  # Configure SSH for real-time priority
+
+  # Create SSH service override directory
+  log_info "Step 1/3: Creating SSH service override directory..."
   if ! mkdir -p /etc/systemd/system/ssh.service.d; then
     log_error "Failed to create SSH service override directory"
     return 1
   fi
 
+  # Create override configuration file
+  log_info "Step 2/3: Creating SSH service override configuration..."
   cat >/etc/systemd/system/ssh.service.d/override.conf <<'EOL'
 [Service]
 CPUSchedulingPolicy=rr
 CPUSchedulingPriority=99
 EOL
+  log_info "Created SSH override configuration with real-time priority settings"
 
   # Reload systemd and restart SSH service
-  if ! systemctl daemon-reload >/dev/null 2>&1; then
+  log_info "Step 3/3: Reloading systemd daemon and restarting SSH service..."
+  if ! systemctl daemon-reload; then
     log_error "Failed to reload systemd daemon"
     return 1
   fi
+  log_info "Systemd daemon reloaded successfully"
 
-  if ! systemctl restart ssh >/dev/null 2>&1; then
+  if ! systemctl restart ssh; then
     log_error "Failed to restart SSH service"
     return 1
   fi
+  log_info "SSH service restarted successfully"
 
+  log_info "✅ SSH configured with real-time priority successfully!"
   return 0
 }
 
@@ -984,16 +1514,26 @@ EOL
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 install_rsync() {
   log_info "Installing rsync..."
+
+  # Install rsync package
+  log_info "Step 1/2: Installing rsync package from repositories..."
   if ! apt install -y rsync; then
     log_error "Failed to install rsync"
     return 1
   fi
 
+  # Verify installation
+  log_info "Step 2/2: Verifying rsync installation..."
   if ! command -v rsync >/dev/null 2>&1; then
     log_error "rsync command not found after installation"
     return 1
   fi
 
+  # Show version information
+  rsync_version=$(rsync --version | head -n 1)
+  log_info "Installed $rsync_version"
+
+  log_info "✅ rsync installation completed successfully!"
   return 0
 }
 
