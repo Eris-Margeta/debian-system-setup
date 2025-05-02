@@ -1137,3 +1137,5 @@ main() {
     fi
   done
 }
+
+main
