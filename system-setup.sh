@@ -348,6 +348,19 @@ install_lua() {
 install_luarocks() {
   log_info "Installing LuaRocks 3.11.1..."
 
+  # First, ensure lua5.1-dev is installed which provides the needed include files
+  log_info "Installing Lua development packages..."
+  if ! apt install -y lua5.1-dev; then
+    log_error "Failed to install lua5.1-dev package"
+    return 1
+  fi
+
+  # Verify the include directory exists
+  if [ ! -d "/usr/include/lua5.1" ]; then
+    log_error "Lua include directory is still missing after installing lua5.1-dev"
+    return 1
+  fi
+
   # Create a temporary directory with a specific name to avoid conflicts
   TEMP_DIR="$HOME/luarocks_install_tmp"
   mkdir -p "$TEMP_DIR"
@@ -383,7 +396,9 @@ install_luarocks() {
 
   # Configure and install with error checking
   log_info "Configuring LuaRocks..."
-  if ! ./configure --with-lua-include=/usr/include/lua5.1; then
+  # Add --with-lua option and make sure build-essential is installed
+  apt install -y build-essential libreadline-dev
+  if ! ./configure --with-lua=/usr --with-lua-include=/usr/include/lua5.1; then
     log_error "Failed to configure LuaRocks"
     cd "$HOME" && rm -rf "$TEMP_DIR"
     return 1
@@ -427,7 +442,7 @@ install_luarocks() {
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 # Function to install Node.js
 #-----------------------------------------------------------------------------------------------------------------------------------------------
-install_node() {
+install_nvm_node() {
   log_info "Setting up Node.js environment..."
 
   # Check if NVM is installed and remove it
@@ -629,7 +644,7 @@ install_docker() {
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 # Function to install Poetry for Python
 #-----------------------------------------------------------------------------------------------------------------------------------------------
-install_poetry() {
+install_python_poetry() {
   log_info "Installing Poetry and Python 3.12.3..."
   # Install Python dependencies
   apt install -y build-essential libssl-dev zlib1g-dev libncurses5-dev libnss3-dev libreadline-dev libffi-dev libsqlite3-dev wget libbz2-dev libgdbm-dev libdb-dev liblzma-dev tk-dev uuid-dev
@@ -864,84 +879,70 @@ install_neovim() {
     log_error "Failed to install tar and gzip"
     return 1
   fi
-
   # Create Neovim directory in user's home
   NVIM_DIR="$ACTUAL_HOME/nvim-linux-x86_64"
   mkdir -p "$NVIM_DIR"
-
   # Download Neovim 0.11.1
   cd /tmp || return 1
   if ! wget -q https://github.com/neovim/neovim/releases/download/v0.11.1/nvim-linux-x86_64.tar.gz; then
     log_error "Failed to download Neovim"
     return 1
   fi
-
   # Extract to user's home
   if ! tar xzvf nvim-linux-x86_64.tar.gz -C "$ACTUAL_HOME" >/dev/null 2>&1; then
     log_error "Failed to extract Neovim"
     return 1
   fi
-
   if ! chown -R "$ACTUAL_USER":"$ACTUAL_USER" "$NVIM_DIR"; then
     log_error "Failed to set ownership for Neovim directory"
     return 1
   fi
-
   # Add Neovim to PATH in .zshrc if not already there
   if ! grep -q "alias nvim=" "$ACTUAL_HOME/.zshrc"; then
-    if ! sed -i "s/alias ec=\"sudo nvim ~\/.zshrc\"/alias ec=\"sudo $NVIM_DIR\/bin\/nvim ~\/.zshrc\"/" "$ACTUAL_HOME/.zshrc"; then
+    # Fix: Using different delimiter (|) for sed since the path contains forward slashes
+    if ! sed -i "s|alias ec=\"sudo nvim ~/\.zshrc\"|alias ec=\"sudo $NVIM_DIR/bin/nvim ~/\.zshrc\"|" "$ACTUAL_HOME/.zshrc"; then
       log_error "Failed to update ec alias in .zshrc"
     fi
-
     cat >>"$ACTUAL_HOME/.zshrc" <<EOL
 alias nvim='$NVIM_DIR/bin/nvim'
 EOL
   fi
-
   # Install tree-sitter
   cd /tmp || return 1
   if ! wget -q https://github.com/tree-sitter/tree-sitter/releases/download/v0.20.8/tree-sitter-linux-x64.gz; then
     log_error "Failed to download tree-sitter"
     return 1
   fi
-
   if ! gunzip tree-sitter-linux-x64.gz; then
     log_error "Failed to extract tree-sitter"
     return 1
   fi
-
   if ! mv tree-sitter-linux-x64 /usr/local/bin/tree-sitter; then
     log_error "Failed to move tree-sitter to /usr/local/bin"
     return 1
   fi
-
   if ! chmod +x /usr/local/bin/tree-sitter; then
     log_error "Failed to make tree-sitter executable"
     return 1
   fi
-
   # Install Neovim Python support
   if ! python3.12 -m pip install neovim >/dev/null 2>&1; then
     log_error "Failed to install Neovim Python support"
     return 1
   fi
-
   # Create directories for LazyVim
   mkdir -p "$ACTUAL_HOME/.config"
-
   # Clone LazyVim starter
   if [ ! -d "$ACTUAL_HOME/.config/nvim" ]; then
     if ! su - "$ACTUAL_USER" -c "git clone https://github.com/LazyVim/starter ~/.config/nvim"; then
       log_error "Failed to clone LazyVim starter"
       return 1
     fi
-
     if ! su - "$ACTUAL_USER" -c "rm -rf ~/.config/nvim/.git"; then
       log_error "Failed to remove .git directory from LazyVim starter"
       # Not returning 1 here as this is not critical
     fi
   fi
-
   # Clean up
   rm -f /tmp/nvim-linux-x86_64.tar.gz
   return 0
@@ -999,7 +1000,7 @@ install_rsync() {
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 # Function to create DEV directory
 #-----------------------------------------------------------------------------------------------------------------------------------------------
-create_dev_dir() {
+create_dev_directory() {
   log_info "Creating DEV directory..."
   if ! mkdir -p "$ACTUAL_HOME/DEV"; then
     log_error "Failed to create DEV directory"
@@ -1116,10 +1117,10 @@ main() {
       install_tmux
       install_go
       install_neovim
-      configure_ssh
+      configure_ssh_priority
       install_rsync
       create_dev_directory
-      apply_zsh_optimizations
+      optimize_zsh
 
       echo ""
       echo -e "${GREEN}All tasks completed successfully!${NC}"
@@ -1146,10 +1147,10 @@ main() {
         14) install_tmux ;;
         15) install_go ;;
         16) install_neovim ;;
-        17) configure_ssh ;;
+        17) configure_ssh_priority ;;
         18) install_rsync ;;
         19) create_dev_directory ;;
-        20) apply_zsh_optimizations ;;
+        20) optimize_zsh ;;
         21)
           echo "Running developer essentials setup (system, build tools, Go, Rust)..."
           update_system
