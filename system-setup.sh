@@ -534,19 +534,16 @@ install_search_tools() {
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 install_lua() {
   log_info "Setting up Lua 5.1 and LuaJIT..."
-
   # Step 1: Check if Lua and LuaJIT are already installed
   log_info "Step 1/5: Checking existing Lua installations..."
   local lua_installed=false
   local luajit_installed=false
-
   if dpkg -l | grep -q "lua5.1"; then
     lua_installed=true
     log_info "- Lua 5.1 is already installed, will reinstall"
   else
     log_info "- Lua 5.1 is not installed, will install new"
   fi
-
   if dpkg -l | grep -q "luajit"; then
     luajit_installed=true
     log_info "- LuaJIT is already installed, will reinstall"
@@ -556,28 +553,24 @@ install_lua() {
 
   # Step 2: Clean up custom installations if they exist
   log_info "Step 2/5: Cleaning up any existing custom Lua installations..."
-
-  if [ -d "/usr/local/bin/lua" ]; then
+  if [ -f "/usr/local/bin/lua" ]; then
     log_info "- Removing custom Lua installation from /usr/local/bin/lua"
-    rm -rf /usr/local/bin/lua*
+    rm -f /usr/local/bin/lua*
   else
     log_info "- No custom Lua binary found in /usr/local/bin"
   fi
-
-  if [ -d "/usr/local/bin/luajit" ]; then
+  if [ -f "/usr/local/bin/luajit" ]; then
     log_info "- Removing custom LuaJIT installation from /usr/local/bin/luajit"
-    rm -rf /usr/local/bin/luajit*
+    rm -f /usr/local/bin/luajit*
   else
     log_info "- No custom LuaJIT binary found in /usr/local/bin"
   fi
-
   if [ -d "/usr/local/include/lua" ]; then
     log_info "- Removing custom Lua headers from /usr/local/include/lua"
     rm -rf /usr/local/include/lua*
   else
     log_info "- No custom Lua headers found in /usr/local/include"
   fi
-
   if [ -d "/usr/local/lib/lua" ]; then
     log_info "- Removing custom Lua libraries from /usr/local/lib/lua"
     rm -rf /usr/local/lib/lua*
@@ -585,18 +578,42 @@ install_lua() {
     log_info "- No custom Lua libraries found in /usr/local/lib"
   fi
 
-  # Step 3: Add buster repository temporarily for Lua 5.1 if needed
-  log_info "Step 3/5: Setting up Debian repository for Lua packages..."
-  if ! grep -q "deb http://deb.debian.org/debian buster main" /etc/apt/sources.list; then
-    log_info "- Adding Debian Buster repository for Lua 5.1"
-    echo "# Add Buster repository for Lua 5.1" >>/etc/apt/sources.list
-    echo "deb http://deb.debian.org/debian buster main" >>/etc/apt/sources.list
-    log_info "- Updating package lists..."
-    apt update -y
-    log_info "- Package lists updated successfully"
+  # Step 3: Use appropriate package management based on distribution
+  log_info "Step 3/5: Preparing for package installation..."
+  # Detect distribution using available methods
+
+  # Initialize variables with defaults
+  DISTRO="unknown"
+  VERSION_ID="unknown"
+
+  # Try lsb_release command first (most reliable)
+  if command -v lsb_release >/dev/null 2>&1; then
+    DISTRO=$(lsb_release -is | tr '[:upper:]' '[:lower:]')
+    VERSION_ID=$(lsb_release -rs)
+    log_info "- Detected distribution using lsb_release: ${DISTRO} ${VERSION_ID}"
+  # If we can't find those, fall back to checking for common files
+  elif grep -q "ID=" /etc/*-release 2>/dev/null; then
+    # Generic approach using grep to find distribution ID in any release file
+    DISTRO=$(grep -m1 "^ID=" /etc/*-release 2>/dev/null | cut -d= -f2 | tr -d '"')
+    VERSION_ID=$(grep -m1 "^VERSION_ID=" /etc/*-release 2>/dev/null | cut -d= -f2 | tr -d '"')
+    log_info "- Detected distribution from release files: ${DISTRO} ${VERSION_ID}"
   else
-    log_info "- Buster repository already configured"
+    # Last resort - try to determine based on available commands
+    if command -v apt >/dev/null 2>&1; then
+      DISTRO="debian-based"
+      log_info "- Detected a Debian-based distribution (found apt)"
+    elif command -v yum >/dev/null 2>&1; then
+      DISTRO="redhat-based"
+      log_info "- Detected a RedHat-based distribution (found yum)"
+    else
+      log_warning "Could not identify distribution, proceeding with generic installation"
+    fi
   fi
+
+  # Convert to lowercase if not already
+  DISTRO=$(echo "$DISTRO" | tr '[:upper:]' '[:lower:]')
+
+  log_info "- Using distribution: ${DISTRO} ${VERSION_ID}"
 
   # Step 4: Install or reinstall Lua and LuaJIT as needed
   log_info "Step 4/5: Installing Lua packages..."
@@ -606,13 +623,11 @@ install_lua() {
   else
     install_cmd+=" lua5.1"
   fi
-
   if $luajit_installed; then
     install_cmd+=" --reinstall luajit"
   else
     install_cmd+=" luajit"
   fi
-
   log_info "- Running: $install_cmd"
   if ! eval "$install_cmd"; then
     log_error "Failed to install Lua packages"
@@ -620,25 +635,28 @@ install_lua() {
   fi
   log_info "- Lua packages installed successfully"
 
-  # Step 5: Clean up repository configuration
-  log_info "Step 5/5: Cleaning up repository configuration..."
-  sed -i 's/^deb http:\/\/deb.debian.org\/debian buster main/# deb http:\/\/deb.debian.org\/debian buster main/' /etc/apt/sources.list
-  log_info "- Buster repository commented out in sources.list"
-
-  log_info "- Updating package lists after cleanup..."
-  apt update -y
-  log_info "- Package lists updated successfully"
-
+  # Step 5: Verify installation
+  log_info "Step 5/5: Verifying installation..."
   # Show installed versions
   lua_version=$(lua5.1 -v 2>/dev/null || echo "Not found")
   luajit_version=$(luajit -v 2>/dev/null || echo "Not found")
   log_info "Installed Lua version: $lua_version"
   log_info "Installed LuaJIT version: $luajit_version"
 
+  if [[ "$lua_version" == "Not found" ]] || [[ "$luajit_version" == "Not found" ]]; then
+    log_warning "One or more Lua components not properly installed"
+    # Create symbolic links if needed
+    if [[ "$lua_version" == "Not found" ]] && [ -f /usr/bin/lua5.1 ]; then
+      ln -sf /usr/bin/lua5.1 /usr/local/bin/lua
+      log_info "Created symbolic link for Lua 5.1"
+      lua_version=$(lua -v 2>/dev/null || echo "Not found")
+      log_info "Lua version after linking: $lua_version"
+    fi
+  fi
+
   log_info "✅ Lua installation completed successfully!"
   return 0
 }
-
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 # Function to install LuaRocks
 #-----------------------------------------------------------------------------------------------------------------------------------------------
@@ -1026,139 +1044,161 @@ EOL
 # Function to install Docker
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 install_docker() {
-  print_section "Installing Docker"
+  log_info "Installing Docker"
 
   # Step 1: Check if Docker is already installed
-  echo "Step 1/8: Checking for existing Docker installation..."
+  log_info "Step 1/8: Checking for existing Docker installation..."
   if command -v docker &>/dev/null; then
-    echo "✓ Docker is already installed. Skipping installation."
+    log_info "✓ Docker is already installed. Skipping installation."
     docker --version
     return 0
   fi
-  echo "- No existing Docker installation found, proceeding with install"
+  log_info "- No existing Docker installation found, proceeding with install"
 
   # Step 2: Install dependencies only if they don't exist
-  echo "Step 2/8: Checking and installing Docker prerequisites..."
-  echo "- Updating package lists..."
-  sudo apt-get update
+  log_info "Step 2/8: Checking and installing Docker prerequisites..."
+  log_info "- Updating package lists..."
+  apt-get update
 
-  echo "- Checking for required packages..."
-  dependencies=("ca-certificates" "curl" "gnupg" "lsb-release")
+  log_info "- Checking for required packages..."
+  dependencies=("ca-certificates" "curl" "gnupg")
   missing_deps=()
 
   for dep in "${dependencies[@]}"; do
     if ! dpkg -l | grep -q "ii  $dep "; then
       missing_deps+=("$dep")
     else
-      echo "  ✓ $dep is already installed"
+      log_info "  ✓ $dep is already installed"
     fi
   done
 
   if [ ${#missing_deps[@]} -gt 0 ]; then
-    echo "- Installing missing packages: ${missing_deps[*]}"
-    sudo apt-get install -y "${missing_deps[@]}"
-    echo "✓ Missing prerequisites installed"
+    log_info "- Installing missing packages: ${missing_deps[*]}"
+    apt-get install -y "${missing_deps[@]}"
+    log_info "✓ Missing prerequisites installed"
   else
-    echo "✓ All prerequisites are already installed"
+    log_info "✓ All prerequisites are already installed"
   fi
 
-  # Step 3: Set up Docker's GPG key
-  echo "Step 3/8: Setting up Docker repository..."
-  echo "- Checking if Docker's GPG key already exists..."
-  if [ -f "/etc/apt/keyrings/docker.gpg" ]; then
-    echo "  ✓ Docker GPG key already exists"
-  else
-    echo "- Creating directory for Docker's GPG key..."
-    sudo mkdir -p "/etc/apt/keyrings"
+  # Step 3: Detect distribution for repository configuration
+  log_info "Step 3/8: Detecting system distribution..."
 
-    echo "- Downloading and installing Docker's GPG key..."
-    curl -fsSL "https://download.docker.com/linux/ubuntu/gpg" | sudo gpg --dearmor -o "/etc/apt/keyrings/docker.gpg"
+  # Initialize distribution variables
+  DISTRO="unknown"
+  CODENAME="unknown"
 
-    echo "- Setting correct permissions for the GPG key..."
-    sudo chmod a+r "/etc/apt/keyrings/docker.gpg"
-    echo "✓ Docker GPG key configured successfully"
+  # Try different methods to detect distribution
+  if command -v lsb_release &>/dev/null; then
+    DISTRO=$(lsb_release -is | tr '[:upper:]' '[:lower:]')
+    CODENAME=$(lsb_release -cs)
+    log_info "- Detected distribution using lsb_release: ${DISTRO} ${CODENAME}"
+  elif grep -q "^ID=" /etc/os-release 2>/dev/null; then
+    DISTRO=$(grep -m1 "^ID=" /etc/os-release | cut -d= -f2 | tr -d '"')
+    if grep -q "^VERSION_CODENAME=" /etc/os-release; then
+      CODENAME=$(grep -m1 "^VERSION_CODENAME=" /etc/os-release | cut -d= -f2 | tr -d '"')
+    elif grep -q "^UBUNTU_CODENAME=" /etc/os-release; then
+      CODENAME=$(grep -m1 "^UBUNTU_CODENAME=" /etc/os-release | cut -d= -f2 | tr -d '"')
+    fi
+    log_info "- Detected distribution from os-release: ${DISTRO} ${CODENAME}"
+  elif [ -f /etc/debian_version ]; then
+    DISTRO="debian"
+    # Fix useless cat warning by reading the file directly with cut
+    CODENAME=$(cut -d/ -f1 /etc/debian_version)
+    log_info "- Detected Debian distribution: ${CODENAME}"
   fi
 
-  # Step 4: Add Docker repository if not already added
-  echo "Step 4/8: Checking Docker repository in APT sources..."
-  if [ -f "/etc/apt/sources.list.d/docker.list" ]; then
-    echo "✓ Docker repository already configured"
-  else
-    echo "- Adding Docker repository to APT sources..."
-    echo \
-      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-      $(lsb_release -cs) stable" | sudo tee "/etc/apt/sources.list.d/docker.list" >/dev/null
-    echo "✓ Docker repository added"
+  log_info "- Using distribution: ${DISTRO} with codename: ${CODENAME}"
+
+  # Step 4: Set up Docker's GPG key
+  log_info "Step 4/8: Setting up Docker repository..."
+  log_info "- Checking if Docker's GPG key directory exists..."
+  if [ ! -d "/etc/apt/keyrings" ]; then
+    log_info "- Creating directory for Docker's GPG key..."
+    mkdir -p "/etc/apt/keyrings"
   fi
 
-  # Step 5: Update package lists with new repository
-  echo "Step 5/8: Updating package lists with Docker repository..."
-  if ! sudo apt-get update; then
-    echo "❌ Failed to update package lists. Docker installation aborted."
+  log_info "- Downloading and installing Docker's GPG key..."
+  if [ ! -f "/etc/apt/keyrings/docker.gpg" ]; then
+    # Download appropriate key based on distribution
+    case "${DISTRO}" in
+    ubuntu | debian)
+      curl -fsSL "https://download.docker.com/linux/${DISTRO}/gpg" | gpg --dearmor -o "/etc/apt/keyrings/docker.gpg"
+      ;;
+    *)
+      # Default to Ubuntu repository if distribution is unknown
+      log_warning "Unknown distribution '${DISTRO}', defaulting to Ubuntu repository"
+      curl -fsSL "https://download.docker.com/linux/ubuntu/gpg" | gpg --dearmor -o "/etc/apt/keyrings/docker.gpg"
+      ;;
+    esac
+    chmod a+r "/etc/apt/keyrings/docker.gpg"
+    log_info "✓ Docker GPG key configured successfully"
+  else
+    log_info "  ✓ Docker GPG key already exists"
+  fi
+
+  # Step 5: Add Docker repository if not already added
+  log_info "Step 5/8: Configuring Docker repository in APT sources..."
+  if [ ! -f "/etc/apt/sources.list.d/docker.list" ]; then
+    log_info "- Adding Docker repository to APT sources..."
+    # Configure the appropriate repository based on the distribution
+    case "${DISTRO}" in
+    ubuntu | debian)
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${DISTRO} ${CODENAME} stable" >"/etc/apt/sources.list.d/docker.list"
+      ;;
+    *)
+      # Default to Ubuntu repository using a stable version
+      log_warning "Unknown distribution '${DISTRO}', using a stable default"
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu focal stable" >"/etc/apt/sources.list.d/docker.list"
+      ;;
+    esac
+    log_info "✓ Docker repository added"
+  else
+    log_info "✓ Docker repository already configured"
+  fi
+
+  # Step 6: Update package lists with new repository
+  log_info "Step 6/8: Updating package lists with Docker repository..."
+  if ! apt-get update; then
+    log_error "Failed to update package lists. Docker installation aborted."
+    # Try removing the problematic repository file
+    if [ -f "/etc/apt/sources.list.d/docker.list" ]; then
+      log_warning "Removing potentially problematic Docker repository file..."
+      rm -f "/etc/apt/sources.list.d/docker.list"
+      apt-get update
+    fi
     return 1
   fi
-  echo "✓ Package lists updated successfully"
+  log_info "✓ Package lists updated successfully"
 
-  # Step 6: Install Docker packages, checking for each one
-  echo "Step 6/8: Checking and installing Docker packages..."
-  docker_packages=("docker-ce" "docker-ce-cli" "containerd.io" "docker-compose-plugin")
-  missing_packages=()
-
-  for pkg in "${docker_packages[@]}"; do
-    if ! dpkg -l | grep -q "ii  $pkg "; then
-      missing_packages+=("$pkg")
-    else
-      echo "  ✓ $pkg is already installed"
-    fi
-  done
-
-  if [ ${#missing_packages[@]} -gt 0 ]; then
-    echo "- Installing missing Docker packages: ${missing_packages[*]} (this may take a few minutes)..."
-    if ! sudo apt-get install -y "${missing_packages[@]}"; then
-      echo "❌ Failed to install Docker packages. Installation aborted."
-      return 1
-    fi
-    echo "✓ Docker packages installed successfully"
-  else
-    echo "✓ All Docker packages are already installed"
+  # Step 7: Install Docker packages
+  log_info "Step 7/8: Installing Docker packages..."
+  log_info "- Installing Docker packages (this may take a few minutes)..."
+  if ! apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+    log_error "Failed to install Docker packages. Installation aborted."
+    return 1
   fi
-
-  # Step 7: Add current user to docker group if not already a member
-  echo "Step 7/8: Checking if user is in docker group..."
-  if groups "$USER" | grep -q "\bdocker\b"; then
-    echo "✓ User $USER is already in the docker group"
-  else
-    echo "- Adding user to the docker group..."
-    if ! sudo usermod -aG docker "$USER"; then
-      echo "⚠️ Failed to add user to docker group. You may need to run Docker with sudo."
-    else
-      echo "✓ User added to docker group"
-    fi
-  fi
+  log_info "✓ Docker packages installed successfully"
 
   # Step 8: Verify installation
-  echo "Step 8/8: Verifying Docker installation..."
+  log_info "Step 8/8: Verifying Docker installation..."
   if command -v docker &>/dev/null; then
     docker_version=$(docker --version)
-    echo "✓ Docker installed successfully: $docker_version"
+    log_info "✓ Docker installed successfully: $docker_version"
 
     # Check if docker compose is installed
-    if command -v docker-compose &>/dev/null; then
-      compose_version=$(docker-compose --version)
-      echo "✓ Docker Compose installed: $compose_version"
-    elif command -v docker &>/dev/null && docker compose version &>/dev/null; then
-      compose_version=$(docker compose version)
-      echo "✓ Docker Compose plugin installed: $compose_version"
+    if docker compose version &>/dev/null; then
+      compose_version=$(docker compose version --short)
+      log_info "✓ Docker Compose plugin installed: $compose_version"
     else
-      echo "⚠️ Docker Compose not found. You may need to install it separately."
+      log_warning "Docker Compose plugin not detected. You may need to install it separately."
     fi
   else
-    echo "⚠️ Docker installation may have failed. 'docker' command not found."
+    log_warning "Docker installation may have failed. 'docker' command not found."
   fi
 
-  echo "✅ Docker installation completed!"
-  echo "NOTE: You will need to log out and back in for the docker group changes to take effect."
-  echo "After logging back in, you can test Docker with: docker run hello-world"
+  log_info "✅ Docker installation completed!"
+  log_info "NOTE: You may need to log out and back in for group changes to take effect."
+  log_info "After logging back in, you can test Docker with: docker run hello-world"
 
   return 0
 }
