@@ -645,27 +645,86 @@ install_lua() {
 install_luarocks() {
   log_info "Installing LuaRocks 3.11.1..."
 
-  # Step 1: Install Lua development packages
+  # Step 1: Try different Lua development packages
   log_info "Step 1/8: Installing Lua development packages..."
-  if ! apt install -y lua5.1-dev; then
-    log_error "Failed to install lua5.1-dev package"
-    return 1
+
+  # Try different Lua versions and package names
+  LUA_DEV_PACKAGES=("lua5.1-dev" "lua-5.1-dev" "liblua5.1-dev" "lua5.2-dev" "liblua5.2-dev" "lua-dev")
+  LUA_INSTALLED=false
+
+  for pkg in "${LUA_DEV_PACKAGES[@]}"; do
+    log_info "Trying to install $pkg..."
+    if apt-cache search --names-only "^$pkg$" | grep -q . && apt install -y "$pkg"; then
+      log_info "✓ Successfully installed $pkg"
+      LUA_INSTALLED=true
+      LUA_PKG="$pkg"
+      break
+    fi
+  done
+
+  if ! $LUA_INSTALLED; then
+    log_info "Could not find pre-packaged Lua dev. Installing Lua from source..."
+    # Install build dependencies
+    apt install -y build-essential libreadline-dev
+
+    # Create and navigate to a temp directory for Lua source
+    LUA_TEMP_DIR="$HOME/lua_install_tmp"
+    mkdir -p "$LUA_TEMP_DIR"
+    cd "$LUA_TEMP_DIR" || {
+      log_error "Failed to create/navigate to Lua temporary directory"
+      return 1
+    }
+
+    # Download and install Lua 5.1 from source
+    wget --show-progress http://www.lua.org/ftp/lua-5.1.5.tar.gz
+    tar zxf lua-5.1.5.tar.gz
+    cd lua-5.1.5 || return 1
+    make linux
+    make install
+
+    # Clean up
+    cd "$HOME" || true
+    rm -rf "$LUA_TEMP_DIR"
+
+    # Set include path for later use with LuaRocks
+    LUA_INCLUDE_PATH="/usr/local/include"
+  else
+    # Find the Lua include directory based on the installed package
+    if [[ "$LUA_PKG" == *"5.1"* ]]; then
+      LUA_INCLUDE_PATH="/usr/include/lua5.1"
+    elif [[ "$LUA_PKG" == *"5.2"* ]]; then
+      LUA_INCLUDE_PATH="/usr/include/lua5.2"
+    else
+      # Try to find the include directory
+      LUA_INCLUDE_PATH=$(find /usr/include -name "lua.h" -exec dirname {} \; | head -n 1)
+      if [ -z "$LUA_INCLUDE_PATH" ]; then
+        LUA_INCLUDE_PATH="/usr/include/lua"
+      fi
+    fi
   fi
-  log_info "✓ Lua development packages installed successfully"
+
+  log_info "✓ Lua development environment prepared successfully"
 
   # Step 2: Verify the include directory exists
   log_info "Step 2/8: Verifying Lua include directory..."
-  if [ ! -d "/usr/include/lua5.1" ]; then
-    log_error "Lua include directory is still missing after installing lua5.1-dev"
-    return 1
+  if [ ! -d "$LUA_INCLUDE_PATH" ]; then
+    log_error "Lua include directory is missing at $LUA_INCLUDE_PATH"
+    log_info "Searching for lua.h..."
+    LUA_INCLUDE_PATH=$(find /usr -name "lua.h" -exec dirname {} \; | head -n 1)
+
+    if [ -z "$LUA_INCLUDE_PATH" ]; then
+      log_error "Could not find lua.h anywhere in the system"
+      return 1
+    else
+      log_info "Found lua.h at $LUA_INCLUDE_PATH"
+    fi
   fi
-  log_info "✓ Lua include directory verified at /usr/include/lua5.1"
+  log_info "✓ Lua include directory verified at $LUA_INCLUDE_PATH"
 
   # Step 3: Create a temporary directory with a specific name to avoid conflicts
   log_info "Step 3/8: Creating temporary directory for installation..."
   TEMP_DIR="$HOME/luarocks_install_tmp"
   mkdir -p "$TEMP_DIR"
-
   # Navigate to the temp directory and verify we're there
   cd "$TEMP_DIR" || {
     log_error "Failed to create/navigate to temporary directory"
@@ -707,10 +766,15 @@ install_luarocks() {
   fi
 
   log_info "Configuring LuaRocks..."
-  if ! ./configure --with-lua=/usr --with-lua-include=/usr/include/lua5.1; then
-    log_error "Failed to configure LuaRocks"
-    cd "$HOME" && rm -rf "$TEMP_DIR"
-    return 1
+  # Use detected Lua include path
+  if ! ./configure --with-lua=/usr --with-lua-include="$LUA_INCLUDE_PATH"; then
+    log_info "First configure attempt failed, trying alternative configuration..."
+    # If first configure fails, try without specifying include path
+    if ! ./configure; then
+      log_error "Failed to configure LuaRocks"
+      cd "$HOME" && rm -rf "$TEMP_DIR"
+      return 1
+    fi
   fi
   log_info "✓ LuaRocks configured successfully"
 
@@ -736,6 +800,11 @@ install_luarocks() {
   # Check if LuaRocks is installed correctly
   if ! command -v luarocks >/dev/null 2>&1; then
     log_error "LuaRocks installation completed but the 'luarocks' command is not available in PATH"
+    # Try to add it to path if it's in a standard location
+    if [ -f "/usr/local/bin/luarocks" ]; then
+      export PATH="/usr/local/bin:$PATH"
+      log_info "Added /usr/local/bin to PATH"
+    fi
   else
     log_info "✓ LuaRocks command available in PATH"
   fi
@@ -1303,7 +1372,9 @@ EOL
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 install_go() {
   log_info "Installing Go..."
+
   # Download the latest Go binary
+  log_info "Downloading Go package..."
   cd /tmp || return 1
   if ! wget -q https://dl.google.com/go/go1.21.7.linux-amd64.tar.gz; then
     log_error "Failed to download Go"
@@ -1311,15 +1382,18 @@ install_go() {
   fi
 
   # Remove any previous Go installation
+  log_info "Removing previous Go installation if exists..."
   rm -rf /usr/local/go
 
   # Extract Go archive
+  log_info "Extracting Go archive..."
   if ! tar -xzf go1.21.7.linux-amd64.tar.gz -C /usr/local; then
     log_error "Failed to install Go"
     return 1
   fi
 
   # Add Go to PATH in .zshrc if not already there
+  log_info "Configuring Go environment..."
   if ! grep -q "export PATH=\$PATH:/usr/local/go/bin" "$ACTUAL_HOME/.zshrc"; then
     {
       echo ""
@@ -1331,10 +1405,12 @@ install_go() {
   fi
 
   # Create Go workspace
+  log_info "Creating Go workspace..."
   mkdir -p "$ACTUAL_HOME/go/"{bin,pkg,src}
   chown -R "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/go"
 
   # Install lemonade for clipboard support
+  log_info "Installing Go extras for tmux and neovim (lemonade)..."
   export PATH=$PATH:/usr/local/go/bin
   if ! go install github.com/lemonade-command/lemonade@latest; then
     log_error "Failed to install lemonade"
@@ -1342,6 +1418,7 @@ install_go() {
   fi
 
   if [ -f "$ACTUAL_HOME/go/bin/lemonade" ]; then
+    log_info "Moving lemonade to system path..."
     mv "$ACTUAL_HOME/go/bin/lemonade" /usr/local/bin/
   else
     log_error "Lemonade binary not found after installation"
@@ -1349,7 +1426,10 @@ install_go() {
   fi
 
   # Clean up
+  log_info "Cleaning up temporary files..."
   rm -f /tmp/go1.21.7.linux-amd64.tar.gz
+
+  log_info "Go installation completed successfully!"
   return 0
 }
 
