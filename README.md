@@ -3,4 +3,4 @@
 
 ## USAGE: 
 
-curl -s https://raw.githubusercontent.com/habibi9325/debian-system-setup/master/system-setup.sh -o system-setup.sh && chmod +x system-setup.sh && sudo ./system-setup.sh
+curl -s https://raw.githubusercontent.com/Eris-Margeta/debian-system-setup/master/system-setup.sh -o system-setup.sh && chmod +x system-setup.sh && sudo ./system-setup.sh
