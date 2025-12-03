@@ -3,7 +3,7 @@
 # Remote Development Environment Setup Script
 # For Debian/Ubuntu-based systems
 # ==========================================================
-# Version: 2.6.0
+# Version: 2.8.0
 # Last Updated: Dec 3, 2025
 
 # --- CONFIGURATION ---
@@ -95,6 +95,22 @@ install_terminal_definitions() {
   log_success "Terminal definitions installed."
 }
 
+install_firewall() {
+  log_info "Installing and configuring UFW firewall..."
+  apt install -y ufw
+  ufw allow ssh
+  ufw --force enable
+  ufw status verbose
+  log_success "Firewall enabled. SSH is allowed."
+}
+
+install_fail2ban() {
+  log_info "Installing Fail2ban..."
+  apt install -y fail2ban
+  systemctl enable fail2ban && systemctl start fail2ban
+  log_success "Fail2ban installed and enabled."
+}
+
 install_zsh() {
   log_info "Installing ZSH and zplug..."
   apt install -y zsh zplug
@@ -109,7 +125,7 @@ HISTSIZE=5000
 SAVEHIST=5000
 
 # Aliases for quick file editing
-alias ec="sudo nvim ~/.zshrc"
+alias ec="nvim ~/.zshrc"
 alias ep="nvim ~/.config/starship.toml"
 alias sc="source ~/.zshrc"
 alias ls="lsd"
@@ -124,8 +140,27 @@ zplug "zsh-users/zsh-autosuggestions"
 if ! zplug check; then zplug install; fi
 zplug load
 EOL
-  chown "$ACTUAL_USER:$ACTUAL_USER" "$ACTUAL_HOME/.zshrc" && chsh -s "$(command -v zsh)" "$ACTUAL_USER"
+  chown "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/.zshrc" && chsh -s "$(command -v zsh)" "$ACTUAL_USER"
   log_success "ZSH setup completed. Shell will be switched at the end of the script."
+}
+
+install_starship() {
+  log_info "Installing Starship prompt..."
+  su - "$ACTUAL_USER" -c "curl -sS https://starship.rs/install.sh | sh -s -- -y"
+  echo -e '\neval "$(starship init zsh)"' >>"$ACTUAL_HOME/.zshrc"
+  mkdir -p "$ACTUAL_HOME/.config"
+  cat >"$ACTUAL_HOME/.config/starship.toml" <<'EOL'
+add_newline = false
+[character]
+success_symbol = "[➜](bold green)"
+error_symbol = "[➜](bold red)"
+[directory]
+truncation_length = 3
+truncation_symbol = "…/"
+style = "bold blue"
+EOL
+  chown -R "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/.config"
+  log_success "Starship prompt installed and configured."
 }
 
 install_git() {
@@ -138,25 +173,9 @@ install_git() {
   log_success "Git & GitHub CLI installed."
 }
 install_utilities() {
-  log_info "Installing utilities..."
-  apt install -y curl wget htop tree iotop lsd
+  log_info "Installing utilities (ranger, lsd, etc)..."
+  apt install -y curl wget htop tree iotop lsd ranger
   log_success "Utilities installed."
-}
-install_search_tools() {
-  log_info "Installing search tools..."
-  apt install -y fzf ripgrep fd-find
-  echo 'alias fd="fdfind"' >>"$ACTUAL_HOME/.zshrc"
-  log_success "Search tools installed."
-}
-install_lua() {
-  log_info "Installing Lua..."
-  apt install -y lua5.1 luajit
-  log_success "Lua installed."
-}
-install_luarocks() {
-  log_info "Installing LuaRocks..."
-  apt install -y luarocks
-  log_success "LuaRocks installed."
 }
 
 install_nvm_node() {
@@ -214,21 +233,33 @@ install_python_poetry() {
 }
 
 install_tmux() {
-  log_info "Installing tmux v$TMUX_VERSION..."
-  apt install -y build-essential libevent-dev libncurses5-dev bison git
+  log_info "Installing tmux, TPM, and Catppuccin theme..."
+  apt install -y build-essential libevent-dev libncurses5-dev bison git xsel
   cd /tmp || return 1
   git clone https://github.com/tmux/tmux.git && cd tmux
   git checkout "$TMUX_VERSION"
   sh autogen.sh && ./configure && make && make install
+  su - "$ACTUAL_USER" -c "git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm"
   cat >"$ACTUAL_HOME/.tmux.conf" <<'EOL'
-set -g default-terminal "screen-256color"
-set -g prefix C-a
-bind | split-window -h; bind - split-window -v
-set -g mouse on
+set-option -g status-interval 60
+set-option -g status on
+set-option -g mouse on
+bind '"' split-window -v -c "#{pane_current_path}"
+bind % split-window -h -c "#{pane_current_path}"
+bind x kill-pane
+set-option -g default-terminal "tmux-256color"
+set -ga terminal-overrides ',xterm-256color:Tc'
+bind-key -T copy-mode-vi y send -X copy-pipe-and-cancel "xsel -ib"
+set-option -g set-clipboard on
+set -g @plugin 'tmux-plugins/tpm'
+set -g @plugin 'catppuccin/tmux'
+set -g @catppuccin_flavor 'frappe'
+run '~/.tmux/plugins/tpm/tpm'
 EOL
   chown "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/.tmux.conf"
   cd /tmp && rm -rf tmux
-  log_success "Tmux installed."
+  log_info "${BOLD}IMPORTANT: After starting tmux, press 'Prefix + I' (that's Ctrl+A then capital I) to install plugins."
+  log_success "Tmux and TPM installed."
 }
 
 install_go() {
@@ -264,55 +295,86 @@ install_neovim() {
   log_success "Neovim installed."
 }
 
-configure_ssh_priority() {
-  log_info "Configuring SSH priority..."
-  mkdir -p /etc/systemd/system/ssh.service.d
-  echo -e "[Service]\nCPUSchedulingPolicy=rr\nCPUSchedulingPriority=99" >/etc/systemd/system/ssh.service.d/override.conf
-  systemctl daemon-reload && systemctl restart ssh
-  log_success "SSH priority configured."
-}
 install_rsync() {
   log_info "Installing rsync..."
   apt install -y rsync
   log_success "rsync installed."
 }
-create_dev_directory() {
-  log_info "Creating DEV directory..."
-  mkdir -p "$ACTUAL_HOME/DEV" && chown "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/DEV"
-  log_success "DEV directory created."
-}
-optimize_zsh() {
-  log_info "Applying ZSH optimizations..."
-  echo "alias update='sudo apt update && sudo apt upgrade -y'" >>"$ACTUAL_HOME/.zshrc"
-  log_success "ZSH optimizations applied."
+install_rclone() {
+  log_info "Installing rclone..."
+  curl https://rclone.org/install.sh | bash
+  log_success "rclone installed."
 }
 
-migrate_bashrc() {
-  log_info "Migrating compatible settings from .bashrc to .zshrc..."
-  if [ ! -f "$ACTUAL_HOME/.bashrc" ]; then
-    log_info ".bashrc not found, skipping migration."
-    return
-  fi
+create_zsh_compiler_script() {
+  log_info "Creating Zsh compiler script..."
+  cat >"$ACTUAL_HOME/compile-zsh.sh" <<'EOL'
+#!/bin/zsh
+FILES=("$HOME/.zshenv" "$HOME/.zshrc" "$HOME/.zprofile")
+echo "Cleaning up old .zwc files..."
+for file in "${FILES[@]}"; do if [ -f "$file.zwc" ]; then rm -v "$file.zwc"; fi; done
+echo "Compiling new .zwc files..."
+for file in "${FILES[@]}"; do if [ -f "$file" ]; then zcompile "$file"; fi; done
+echo "Compilation complete!"
+EOL
+  chmod +x "$ACTUAL_HOME/compile-zsh.sh" && chown "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/compile-zsh.sh"
+  log_success "Zsh compiler script created at ~/compile-zsh.sh"
+}
 
-  # Create a header in .zshrc to denote migrated settings
-  echo -e "\n# --- Migrated from .bashrc ---" >>"$ACTUAL_HOME/.zshrc"
+generate_setup_report() {
+  log_info "Generating setup report..."
+  cat >"$ACTUAL_HOME/setup-report.txt" <<EOL
+=================================
+ SERVER SETUP REPORT & QUICK TIPS
+=================================
+This server was configured on $(date).
 
-  # Read uncommented, non-empty lines from .bashrc
-  grep -vE '^(#|$)' "$ACTUAL_HOME/.bashrc" | while read -r line; do
-    # Check if the exact line already exists in .zshrc to avoid duplicates
-    if ! grep -qFx -- "$line" "$ACTUAL_HOME/.zshrc"; then
-      log_info "  -> Migrating: $line"
-      echo "$line" >>"$ACTUAL_HOME/.zshrc"
-    fi
-  done
-  log_success ".bashrc migration complete."
+---
+## Security
+---
+### UFW (Firewall)
+- Status: $(ufw status | head -n 1)
+- To see rules: sudo ufw status numbered
+- To allow http: sudo ufw allow http
+- To delete a rule: sudo ufw delete [rule_number]
+
+### Fail2ban
+- Status: $(systemctl is-active fail2ban)
+- Protects SSH from brute-force attacks automatically.
+- To check banned IPs: sudo fail2ban-client status sshd
+
+---
+## Shell Environment
+---
+### Zsh & Starship
+- Your default shell is Zsh with a Starship prompt.
+- To edit shell config: nvim ~/.zshrc
+- To edit prompt config: nvim ~/.config/starship.toml
+- To speed up shell start time: ./compile-zsh.sh
+
+### Tmux
+- Prefix Key: Ctrl+A
+- To install plugins: Start tmux, press Ctrl+A then I (capital i)
+- New vertical split: Ctrl+A then %
+- New horizontal split: Ctrl+A then "
+
+---
+## Utilities
+---
+### Ranger, rclone, rsync
+- To start file manager: ranger
+- To configure cloud sync: rclone config
+- To transfer files: rsync -avz /local/path user@remote:/remote/path
+EOL
+  chown "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/setup-report.txt"
+  log_success "Setup report created at ~/setup-report.txt"
 }
 
 # --- UNINSTALLATION FUNCTIONS ---
 
 uninstall_neovim() {
   log_info "Uninstalling Neovim..."
-  rm -rf "$ACTUAL_HOME/.local/nvim" "$ACTUAL_HOME/.config/nvim" "$ACTUAL_HOME/.local/share/nvim" "$ACTUAL_HOME/.local/state/nvim"
+  rm -rf "$ACTUAL_HOME/.local/nvim" "$ACTUAL_HOME/.config/nvim" "$ACTUAL_HOME/.local/share/nvim"
   sed -i "/alias nvim=.*nvim/d" "$ACTUAL_HOME/.zshrc"
   log_success "Neovim uninstalled."
 }
@@ -324,7 +386,8 @@ uninstall_go() {
 }
 uninstall_tmux() {
   log_info "Uninstalling tmux..."
-  rm -f /usr/local/bin/tmux "$ACTUAL_HOME/.tmux.conf"
+  rm -f /usr/local/bin/tmux
+  rm -rf "$ACTUAL_HOME/.tmux.conf" "$ACTUAL_HOME/.tmux"
   log_success "Tmux uninstalled."
 }
 uninstall_python_poetry() {
@@ -359,72 +422,40 @@ uninstall_nvm_node() {
   sed -i -e '/# NVM/d' -e '/NVM_DIR/d' "$ACTUAL_HOME/.zshrc"
   log_success "NVM & Node uninstalled."
 }
-uninstall_luarocks() {
-  log_info "Uninstalling LuaRocks..."
-  purge_packages luarocks
-  log_success "LuaRocks uninstalled."
-}
-uninstall_lua() {
-  log_info "Uninstalling Lua..."
-  purge_packages lua5.1 luajit
-  log_success "Lua uninstalled."
-}
-uninstall_search_tools() {
-  log_info "Uninstalling search tools..."
-  purge_packages fzf ripgrep fd-find
-  sed -i '/alias fd=fdfind/d' "$ACTUAL_HOME/.zshrc"
-  log_success "Search tools uninstalled."
-}
 uninstall_utilities() {
   log_info "Uninstalling utilities (keeping curl)..."
-  purge_packages wget htop tree iotop lsd
+  purge_packages wget htop tree iotop lsd ranger
   log_success "Utilities uninstalled."
-}
-uninstall_git() {
-  log_info "Uninstalling Git & GitHub CLI..."
-  purge_packages git gh
-  rm -f /etc/apt/sources.list.d/github-cli.list
-  apt update >/dev/null
-  log_success "Git & GitHub CLI uninstalled."
-}
-unconfigure_ssh_priority() {
-  log_info "Removing SSH priority..."
-  rm -f /etc/systemd/system/ssh.service.d/override.conf
-  systemctl daemon-reload && systemctl restart ssh
-  log_success "SSH priority unconfigured."
-}
-uninstall_rsync() {
-  log_info "Uninstalling rsync..."
-  purge_packages rsync
-  log_success "rsync uninstalled."
-}
-remove_dev_directory() {
-  log_info "Removing DEV directory..."
-  rm -rf "$ACTUAL_HOME/DEV"
-  log_success "DEV directory removed."
-}
-unoptimize_zsh() {
-  log_info "Removing ZSH optimizations..."
-  sed -i "/alias update=.*/d" "$ACTUAL_HOME/.zshrc"
-  log_success "ZSH optimizations removed."
 }
 uninstall_zsh() {
   log_info "Uninstalling ZSH..."
   chsh -s /bin/bash "$ACTUAL_USER"
   purge_packages zsh zplug
-  rm -f "$ACTUAL_HOME/.zshrc" "$ACTUAL_HOME/.zsh_history"
+  rm -f "$ACTUAL_HOME/.zshrc" "$ACTUAL_HOME/.zsh_history" "$ACTUAL_HOME/compile-zsh.sh"
   rm -rf "$ACTUAL_HOME/.zsh" "$ACTUAL_HOME/.zplug"
   log_success "ZSH uninstalled."
 }
-uninstall_terminal_definitions() {
-  log_info "Uninstalling terminal definitions..."
-  purge_packages ncurses-term
-  log_success "Terminal definitions uninstalled."
+uninstall_starship() {
+  log_info "Uninstalling Starship..."
+  rm -f /usr/local/bin/starship "$ACTUAL_HOME/.config/starship.toml"
+  sed -i '/starship init/d' "$ACTUAL_HOME/.zshrc"
+  log_success "Starship uninstalled."
 }
-uninstall_build_essentials() {
-  log_info "Uninstalling build essentials..."
-  purge_packages build-essential cmake gettext
-  log_success "Build essentials uninstalled."
+uninstall_rclone() {
+  log_info "Uninstalling rclone..."
+  rm -f /usr/bin/rclone /usr/local/share/man/man1/rclone.1
+  log_success "rclone uninstalled."
+}
+uninstall_firewall() {
+  log_info "Disabling and uninstalling firewall..."
+  ufw --force reset
+  apt purge -y ufw
+  log_success "Firewall uninstalled."
+}
+uninstall_fail2ban() {
+  log_info "Uninstalling Fail2ban..."
+  apt purge -y fail2ban
+  log_success "Fail2ban uninstalled."
 }
 
 uninstall_all() {
@@ -437,18 +468,12 @@ uninstall_all() {
   uninstall_rust
   uninstall_nerd_font
   uninstall_nvm_node
-  uninstall_luarocks
-  uninstall_lua
-  uninstall_search_tools
   uninstall_utilities
-  uninstall_git
-  unconfigure_ssh_priority
-  uninstall_rsync
-  remove_dev_directory
-  unoptimize_zsh
+  uninstall_starship
   uninstall_zsh
-  uninstall_terminal_definitions
-  uninstall_build_essentials
+  uninstall_firewall
+  uninstall_fail2ban
+  uninstall_rclone
   log_info "Cleaning up orphaned packages..."
   apt autoremove -y
   apt clean
@@ -463,31 +488,26 @@ show_menu() {
   echo -e "${BOLD}------------------${NC}"
   echo " 1) Update system packages"
   echo " 2) Install essential build tools"
-  echo " 3) Install essential utilities (curl, wget, etc)"
-  echo " 4) Install ZSH and set as default shell"
+  echo " 3) Install essential utilities (ranger, lsd, etc)"
+  echo
+  echo -e "${BOLD}Security (Recommended First):${NC}"
+  echo " 4) Install and Configure Firewall (UFW)"
+  echo " 5) Install Fail2ban (Brute-force protection)"
+  echo
+  echo -e "${BOLD}Shell Environment:${NC}"
+  echo " 6) Install ZSH and set as default shell"
+  echo " 7) Install Starship Prompt"
+  echo " 8) Install Nerd Font"
+  echo " 9) Install tmux (with TPM & Catppuccin)"
   echo
   echo -e "${BOLD}Development Tools:${NC}"
-  echo " 5) Install Git & GitHub CLI"
-  echo " 6) Install search tools (fzf, rg, fd)"
-  echo " 7) Install Lua & LuaJIT"
-  echo " 8) Install LuaRocks"
-  echo " 9) Install NVM & Node.js"
-  echo " 10) Install Rust"
-  echo " 11) Install Go"
-  echo " 12) Install Python & Poetry"
-  echo " 13) Install Docker"
-  echo
-  echo -e "${BOLD}Terminal Environment:${NC}"
-  echo " 14) Install Neovim & LazyVim"
-  echo " 15) Install tmux"
-  echo " 16) Install Nerd Font"
-  echo " 17) Install terminal definitions (Fix Kitty)"
-  echo
-  echo -e "${BOLD}System & Misc:${NC}"
-  echo " 18) Configure SSH with real-time priority"
-  echo " 19) Install rsync"
-  echo " 20) Create DEV directory"
-  echo " 21) Apply ZSH optimizations"
+  echo " 10) Install Git & GitHub CLI"
+  echo " 11) Install NVM & Node.js"
+  echo " 12) Install Rust"
+  echo " 13) Install Go"
+  echo " 14) Install Python & Poetry"
+  echo " 15) Install Docker"
+  echo " 16) Install rclone (Cloud Sync)"
   echo
   echo " 0) Install ALL (recommended)"
   echo -e "99) ${RED}Uninstall ALL${NC}"
@@ -506,39 +526,29 @@ main() {
       echo "Exiting script."
       exit 0
       ;;
+    # Logical order for a complete, secure setup
     0)
-      tasks=(1 3 2 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21)
+      tasks=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16)
       will_exec_zsh=true
       ;;
-    99) read -r -p "$(echo -e ${RED}${BOLD}"Sure? This will remove all script-installed components. [y/N] "${NC})" confirm && [[ "$confirm" =~ ^[yY]$ ]] && uninstall_all ;;
+    99) read -r -p "$(echo -e ${RED}${BOLD}"Sure? This will remove ALL script-installed components. [y/N] "${NC})" confirm && [[ "$confirm" =~ ^[yY]$ ]] && uninstall_all ;;
     *) tasks=($choices) ;;
     esac
     if [[ -n "${tasks-}" ]]; then
       for choice in "${tasks[@]}"; do
         case "$choice" in
-        1) update_system ;; 2) install_build_essentials ;; 3) install_utilities ;; 4) install_zsh ;; 5) install_git ;; 6) install_search_tools ;;
-        7) install_lua ;; 8) install_luarocks ;; 9) install_nvm_node ;; 10) install_rust ;; 11) install_go ;; 12) install_python_poetry ;;
-        13) install_docker ;; 14) install_neovim ;; 15) install_tmux ;; 16) install_nerd_font ;; 17) install_terminal_definitions ;;
-        18) configure_ssh_priority ;; 19) install_rsync ;; 20) create_dev_directory ;; 21) optimize_zsh ;;
+        1) update_system ;; 2) install_build_essentials ;; 3) install_utilities ;; 4) install_firewall ;; 5) install_fail2ban ;; 6) install_zsh ;;
+        7) install_starship ;; 8) install_nerd_font ;; 9) install_tmux ;; 10) install_git ;; 11) install_nvm_node ;; 12) install_rust ;;
+        13) install_go ;; 14) install_python_poetry ;; 15) install_docker ;; 16) install_rclone ;;
         *) log_error "Invalid choice: $choice" ;;
         esac
       done
 
       if [ "$will_exec_zsh" = true ]; then
-        migrate_bashrc
+        create_zsh_compiler_script
+        generate_setup_report
         log_success "${BOLD}All tasks completed!"
-
-        # Verbose shell check
-        log_info "Performing final shell verification..."
-        local new_shell
-        new_shell=$(getent passwd "$ACTUAL_USER" | cut -d: -f7)
-        log_info "Default shell for user '$ACTUAL_USER' is now set to: $new_shell"
-
         log_info "${BOLD}The script will now switch your current session to Zsh."
-        log_info "For future sessions, you can switch manually by:"
-        log_info "1. Exiting and logging back in (recommended)."
-        log_info "2. Typing 'exec zsh' in a bash session."
-
         read -n 1 -s -r -p "Press any key to switch to Zsh..."
         exec su - "$ACTUAL_USER" -c zsh
       else
