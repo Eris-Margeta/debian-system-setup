@@ -3,7 +3,7 @@
 # Remote Development Environment Setup Script
 # For Debian/Ubuntu-based systems
 # ==========================================================
-# Version: 3.1.0 (Final with Custom Prompt)
+# Version: 3.2.0 (Production)
 # Last Updated: Dec 3, 2025
 
 # --- CONFIGURATION ---
@@ -113,22 +113,14 @@ install_starship() {
   mkdir -p "$ACTUAL_HOME/.config"
   cat >"$ACTUAL_HOME/.config/starship.toml" <<'EOL'
 # ~/.config/starship.toml
-
-# General prompt configuration
 format = """
 └── eris@m1 ➜ $directory$git_branch$git_status$python$nodejs$rust$golang$cmd_duration$time
 $character"""
-
-# Add a newline before the prompt
 add_newline = false
-
-# Customize the prompt symbol
 [character]
 success_symbol = "[➜](bold green)"
 error_symbol = "[➜](bold red)"
 vicmd_symbol = "[❖](bold green)"
-
-# Directory configuration
 [directory]
 style = "bold green"
 truncation_length = 4
@@ -136,57 +128,22 @@ truncate_to_repo = true
 home_symbol = "⌂"
 read_only = " [!](bold red)"
 truncation_symbol = "…/"
-
-# Git branch
 [git_branch]
 format = " on [$branch](bold green)"
-
-# Git status
 [git_status]
 style = "bold red"
-stashed = " 📦"
-ahead = " ⇡"
-behind = " ⇣"
-diverged = " ⇕"
-untracked = " …"
-deleted = " 🗑"
-renamed = " »"
-modified = " !"
-staged = " +"
-
-# Python version display
+stashed = " 📦"; ahead = " ⇡"; behind = " ⇣"; diverged = " ⇕"; untracked = " …"; deleted = " 🗑"; renamed = " »"; modified = " !"; staged = " +"
 [python]
-pyenv_version_name = true
 format = " via [🐍 $version](bold green)"
-style = "bold green"
-
-# Node.js version display
 [nodejs]
 format = " via [⬢ $version](bold green)"
-style = "bold green"
-
-# Rust version display
 [rust]
 format = " via [🦀 $version](bold red)"
-
-# Go version display
 [golang]
 format = " via [🐹 $version](bold cyan)"
-
-# Time display
-[time]
-format = " at [$time](bold yellow)"
-time_format = "%H:%M:%S"
-style = "bold green"
-disabled = true
-
-# Command duration display
 [cmd_duration]
 format = " took [$duration](bold yellow)"
-style = "bold yellow"
 min_time = 1000
-
-# Disable unnecessary modules
 [package]
 disabled = true
 [battery]
@@ -281,7 +238,7 @@ install_python_poetry() {
 
 install_tmux() {
   log_info "Installing tmux, TPM, and Catppuccin theme..."
-  apt install -y build-essential libevent-dev libncurses5-dev bison git xsel
+  apt install -y build-essential libevent-dev libncurses5-dev bison git
   cd /tmp || return 1
   git clone https://github.com/tmux/tmux.git && cd tmux
   git checkout "$TMUX_VERSION"
@@ -292,8 +249,6 @@ set-option -g status-interval 60; set-option -g status on; set-option -g mouse o
 bind '"' split-window -v -c "#{pane_current_path}"; bind % split-window -h -c "#{pane_current_path}"
 bind x kill-pane
 set-option -g default-terminal "tmux-256color"; set -ga terminal-overrides ',xterm-256color:Tc'
-bind-key -T copy-mode-vi y send -X copy-pipe-and-cancel "xsel -ib"
-set-option -g set-clipboard on
 set -g @plugin 'tmux-plugins/tpm'; set -g @plugin 'catppuccin/tmux'; set -g @catppuccin_flavor 'frappe'
 run '~/.tmux/plugins/tpm/tpm'
 EOL
@@ -319,12 +274,27 @@ EOL
   log_success "Go installed."
 }
 
+install_neovim_dependencies() {
+  log_info "Installing all Neovim & LazyVim dependencies..."
+  apt install -y lua5.1 liblua5.1-0-dev luajit luarocks trash-cli imagemagick ghostscript
+  log_info "--> Installing Tree-sitter CLI v0.22.6 (required by LazyVim)..."
+  curl -L https://github.com/tree-sitter/tree-sitter/releases/download/v0.22.6/tree-sitter-linux-x64.gz -o /tmp/tree-sitter.gz
+  gunzip /tmp/tree-sitter.gz
+  mv /tmp/tree-sitter /usr/local/bin/tree-sitter
+  chmod +x /usr/local/bin/tree-sitter
+  log_info "--> Installing texlive-full for LaTeX support... This may take a long time."
+  apt install -y texlive-full
+  log_info "--> Installing Mermaid CLI for diagrams..."
+  su - "$ACTUAL_USER" -c 'source ~/.zshrc; npm i -g @mermaid-js/mermaid-cli'
+  log_success "All Neovim dependencies installed."
+}
+
 install_neovim() {
-  log_info "Installing Neovim, LazyVim, and all dependencies..."
-  log_info "--> Ensuring build tools, git, and search tools are installed..."
+  log_info "Starting full Neovim & LazyVim installation..."
   install_build_essentials
   install_git
   install_search_tools
+  install_neovim_dependencies
   log_info "--> Installing Neovim binary..."
   apt install -y tar gzip
   local nvim_dir="$ACTUAL_HOME/.local/nvim"
@@ -337,6 +307,8 @@ install_neovim() {
   log_info "--> Cloning LazyVim starter configuration..."
   if [ ! -d "$ACTUAL_HOME/.config/nvim" ]; then su - "$ACTUAL_USER" -c "git clone https://github.com/LazyVim/starter ~/.config/nvim"; fi
   rm -f nvim-linux64.tar.gz
+  log_info "${BOLD}IMPORTANT: On your first run of nvim, please run the following commands to install parsers:"
+  log_info "${BOLD}--> :TSInstall bash regex"
   log_success "Neovim and LazyVim installed successfully."
 }
 
@@ -435,9 +407,12 @@ uninstall_all() {
 }
 uninstall_neovim() {
   log_info "Uninstalling Neovim..."
+  purge_packages lua5.1 liblua5.1-0-dev luajit luarocks trash-cli imagemagick ghostscript texlive-full
+  rm -f /usr/local/bin/tree-sitter
+  su - "$ACTUAL_USER" -c 'source ~/.zshrc; npm uninstall -g @mermaid-js/mermaid-cli'
   rm -rf "$ACTUAL_HOME/.local/nvim" "$ACTUAL_HOME/.config/nvim"
   sed -i "/alias nvim=/d" "$ACTUAL_HOME/.zshrc"
-  log_success "Neovim uninstalled."
+  log_success "Neovim & dependencies uninstalled."
 }
 uninstall_go() {
   log_info "Uninstalling Go..."
