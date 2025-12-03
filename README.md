@@ -1,6 +1,3 @@
-Of course. Here is the final, completely updated `README.md` file. It reflects all the features of the production-ready script, including the security hardening, the robust Neovim/LazyVim dependency installation, and all the added tools.
-
-```markdown
 # Debian System Setup Script
 
 ## USAGE: 
