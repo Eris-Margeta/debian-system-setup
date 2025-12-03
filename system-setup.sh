@@ -3,7 +3,7 @@
 # Remote Development Environment Setup Script
 # For Debian/Ubuntu-based systems
 # ==========================================================
-# Version: 2.3.0
+# Version: 2.4.0
 # Last Updated: Dec 3, 2025
 
 # --- CONFIGURATION ---
@@ -96,16 +96,28 @@ install_terminal_definitions() {
 }
 
 install_zsh() {
-  log_info "Installing ZSH..."
+  log_info "Installing ZSH and zplug..."
   apt install -y zsh zplug
   if [ -f "$ACTUAL_HOME/.zshrc" ]; then mv "$ACTUAL_HOME/.zshrc" "$ACTUAL_HOME/.zshrc.bak"; fi
-  cat >"$ACTUAL_HOME/.zshrc" <<'EOL'
+  cat >"$ACTUAL_HOME/.zshrc" <<EOL
+# Fix for modern terminals like Kitty
 export TERM=xterm
-alias ls="lsd"
-alias fd="fdfind"
+
+# History settings
+HISTFILE=~/.zsh_history
 HISTSIZE=5000
 SAVEHIST=5000
-HISTFILE=~/.zsh_history
+
+# Aliases for quick file editing
+alias ec="sudo nvim ~/.zshrc"
+alias ep="nvim ~/.config/starship.toml"
+alias sc="source ~/.zshrc"
+alias ls="lsd"
+
+# Python aliases
+alias python='python3.12'
+
+# zplug plugin manager
 source /usr/share/zplug/init.zsh
 zplug "zsh-users/zsh-syntax-highlighting"
 zplug "zsh-users/zsh-autosuggestions"
@@ -113,7 +125,7 @@ if ! zplug check; then zplug install; fi
 zplug load
 EOL
   chown "$ACTUAL_USER:$ACTUAL_USER" "$ACTUAL_HOME/.zshrc" && chsh -s "$(command -v zsh)" "$ACTUAL_USER"
-  log_success "ZSH setup complete."
+  log_success "ZSH setup completed. Please reload your shell to apply changes."
 }
 
 install_git() {
@@ -242,7 +254,6 @@ install_neovim() {
   local nvim_dir="$ACTUAL_HOME/.local/nvim"
   mkdir -p "$nvim_dir"
   cd /tmp || return 1
-  # Use -L to follow redirects to get the latest version
   curl -L -o nvim-linux64.tar.gz "$NEOVIM_URL"
   tar xzvf nvim-linux64.tar.gz -C "$nvim_dir" --strip-components 1
   chown -R "$ACTUAL_USER":"$ACTUAL_USER" "$nvim_dir"
@@ -349,8 +360,8 @@ uninstall_search_tools() {
   log_success "Search tools uninstalled."
 }
 uninstall_utilities() {
-  log_info "Uninstalling utilities..."
-  purge_packages curl wget htop tree iotop lsd
+  log_info "Uninstalling utilities (keeping curl)..."
+  purge_packages wget htop tree iotop lsd
   log_success "Utilities uninstalled."
 }
 uninstall_git() {
@@ -457,7 +468,7 @@ main() {
       echo "Exiting script."
       exit 0
       ;;
-    0) tasks=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21) ;;
+    0) tasks=(1 6 2 3 4 5 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21) ;; # Ensure 6 (utilities) is early for curl
     99) read -r -p "$(echo -e ${RED}${BOLD}"Sure? This will remove all script-installed components. [y/N] "${NC})" confirm && [[ "$confirm" =~ ^[yY]$ ]] && uninstall_all ;;
     *) tasks=($choices) ;;
     esac
@@ -471,7 +482,12 @@ main() {
         *) log_error "Invalid choice: $choice" ;;
         esac
       done
-      log_success "Selected tasks completed!"
+      if [[ " ${tasks[*]} " =~ " 0 " ]]; then
+        log_success "${BOLD}All tasks completed!"
+        log_info "${BOLD}IMPORTANT: Please log out and log back in, or run 'exec zsh' to apply all changes."
+      else
+        log_success "Selected tasks completed!"
+      fi
     fi
     unset tasks
     read -n 1 -s -r -p "Press any key to return to the menu..."
