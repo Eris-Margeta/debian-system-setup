@@ -3,7 +3,7 @@
 # Remote Development Environment Setup Script
 # For Debian/Ubuntu-based systems
 # ==========================================================
-# Version: 2.4.0
+# Version: 2.5.0
 # Last Updated: Dec 3, 2025
 
 # --- CONFIGURATION ---
@@ -164,6 +164,8 @@ install_nvm_node() {
   log_info "Installing NVM v$NVM_VERSION and Node.js..."
   su - "$ACTUAL_USER" -c "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v$NVM_VERSION/install.sh | bash"
   cat >>"$ACTUAL_HOME/.zshrc" <<'EOL'
+
+# NVM (Node Version Manager)
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 EOL
@@ -239,6 +241,8 @@ install_go() {
   wget -q "https://dl.google.com/go/$go_archive"
   rm -rf /usr/local/go && tar -xzf "$go_archive" -C /usr/local
   cat >>"$ACTUAL_HOME/.zshrc" <<'EOL'
+
+# Go Language
 export PATH=$PATH:/usr/local/go/bin
 export GOPATH=$HOME/go
 export PATH=$PATH:$GOPATH/bin
@@ -257,11 +261,9 @@ install_neovim() {
   curl -L -o nvim-linux64.tar.gz "$NEOVIM_URL"
   tar xzvf nvim-linux64.tar.gz -C "$nvim_dir" --strip-components 1
   chown -R "$ACTUAL_USER":"$ACTUAL_USER" "$nvim_dir"
-  # Add alias to .zshrc if it doesn't exist
   if ! grep -q "alias nvim=" "$ACTUAL_HOME/.zshrc"; then
     echo "alias nvim='$nvim_dir/bin/nvim'" >>"$ACTUAL_HOME/.zshrc"
   fi
-  # Install LazyVim starter config
   if [ ! -d "$ACTUAL_HOME/.config/nvim" ]; then
     su - "$ACTUAL_USER" -c "git clone https://github.com/LazyVim/starter ~/.config/nvim"
   fi
@@ -303,7 +305,7 @@ uninstall_neovim() {
 uninstall_go() {
   log_info "Uninstalling Go..."
   rm -rf /usr/local/go "$ACTUAL_HOME/go"
-  sed -i -e '/GOPATH/d' -e '/\/usr\/local\/go\/bin/d' "$ACTUAL_HOME/.zshrc"
+  sed -i -e '/# Go Language/d' -e '/GOPATH/d' -e '/\/usr\/local\/go\/bin/d' "$ACTUAL_HOME/.zshrc"
   log_success "Go uninstalled."
 }
 uninstall_tmux() {
@@ -340,7 +342,7 @@ uninstall_nerd_font() {
 uninstall_nvm_node() {
   log_info "Uninstalling NVM & Node..."
   rm -rf "$ACTUAL_HOME/.nvm"
-  sed -i '/NVM_DIR/d' "$ACTUAL_HOME/.zshrc"
+  sed -i -e '/# NVM/d' -e '/NVM_DIR/d' "$ACTUAL_HOME/.zshrc"
   log_success "NVM & Node uninstalled."
 }
 uninstall_luarocks() {
@@ -443,16 +445,37 @@ uninstall_all() {
 
 show_menu() {
   show_banner
-  echo -e "${BOLD}Available tasks:${NC}"
-  options=(
-    "Update system packages" "Install essential build tools" "Install terminal definitions (Fix Kitty)" "Install ZSH" "Install Git & GitHub CLI"
-    "Install utilities (curl, htop, etc)" "Install search tools (fzf, rg, fd)" "Install Lua & LuaJIT" "Install LuaRocks" "Install NVM & Node.js"
-    "Install Nerd Font" "Install Rust" "Install Docker" "Install Python & Poetry" "Install tmux" "Install Go" "Install Neovim & LazyVim"
-    "Configure SSH with real-time priority" "Install rsync" "Create DEV directory" "Apply ZSH optimizations"
-  )
-  for i in "${!options[@]}"; do printf "%2d) %s\n" "$((i + 1))" "${options[i]}"; done
+  echo -e "${BOLD}Installation Menu:${NC}"
+  echo -e "${BOLD}------------------${NC}"
+  echo " 1) Update system packages"
+  echo " 2) Install essential build tools"
+  echo " 3) Install essential utilities (curl, wget, etc)"
+  echo " 4) Install ZSH and set as default shell"
   echo
-  echo " 0) Install ALL (complete setup)"
+  echo -e "${BOLD}Development Tools:${NC}"
+  echo " 5) Install Git & GitHub CLI"
+  echo " 6) Install search tools (fzf, rg, fd)"
+  echo " 7) Install Lua & LuaJIT"
+  echo " 8) Install LuaRocks"
+  echo " 9) Install NVM & Node.js"
+  echo " 10) Install Rust"
+  echo " 11) Install Go"
+  echo " 12) Install Python & Poetry"
+  echo " 13) Install Docker"
+  echo
+  echo -e "${BOLD}Terminal Environment:${NC}"
+  echo " 14) Install Neovim & LazyVim"
+  echo " 15) Install tmux"
+  echo " 16) Install Nerd Font"
+  echo " 17) Install terminal definitions (Fix Kitty)"
+  echo
+  echo -e "${BOLD}System & Misc:${NC}"
+  echo " 18) Configure SSH with real-time priority"
+  echo " 19) Install rsync"
+  echo " 20) Create DEV directory"
+  echo " 21) Apply ZSH optimizations"
+  echo
+  echo " 0) Install ALL (recommended)"
   echo -e "99) ${RED}Uninstall ALL${NC}"
   echo " q) Quit"
   echo
@@ -468,17 +491,18 @@ main() {
       echo "Exiting script."
       exit 0
       ;;
-    0) tasks=(1 6 2 3 4 5 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21) ;; # Ensure 6 (utilities) is early for curl
+    # This is the new, logical installation order for "Install ALL"
+    0) tasks=(1 3 2 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21) ;;
     99) read -r -p "$(echo -e ${RED}${BOLD}"Sure? This will remove all script-installed components. [y/N] "${NC})" confirm && [[ "$confirm" =~ ^[yY]$ ]] && uninstall_all ;;
     *) tasks=($choices) ;;
     esac
     if [[ -n "${tasks-}" ]]; then
       for choice in "${tasks[@]}"; do
         case "$choice" in
-        1) update_system ;; 2) install_build_essentials ;; 3) install_terminal_definitions ;; 4) install_zsh ;; 5) install_git ;; 6) install_utilities ;;
-        7) install_search_tools ;; 8) install_lua ;; 9) install_luarocks ;; 10) install_nvm_node ;; 11) install_nerd_font ;; 12) install_rust ;;
-        13) install_docker ;; 14) install_python_poetry ;; 15) install_tmux ;; 16) install_go ;; 17) install_neovim ;; 18) configure_ssh_priority ;;
-        19) install_rsync ;; 20) create_dev_directory ;; 21) optimize_zsh ;;
+        1) update_system ;; 2) install_build_essentials ;; 3) install_utilities ;; 4) install_zsh ;; 5) install_git ;; 6) install_search_tools ;;
+        7) install_lua ;; 8) install_luarocks ;; 9) install_nvm_node ;; 10) install_rust ;; 11) install_go ;; 12) install_python_poetry ;;
+        13) install_docker ;; 14) install_neovim ;; 15) install_tmux ;; 16) install_nerd_font ;; 17) install_terminal_definitions ;;
+        18) configure_ssh_priority ;; 19) install_rsync ;; 20) create_dev_directory ;; 21) optimize_zsh ;;
         *) log_error "Invalid choice: $choice" ;;
         esac
       done
