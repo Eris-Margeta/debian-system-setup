@@ -3,7 +3,7 @@
 # Remote Development Environment Setup Script
 # For Debian/Ubuntu-based systems
 # ==========================================================
-# Version: 2.8.0
+# Version: 3.1.0 (Final with Custom Prompt)
 # Last Updated: Dec 3, 2025
 
 # --- CONFIGURATION ---
@@ -17,17 +17,13 @@ TMUX_VERSION="3.5a"
 NEOVIM_URL="https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz"
 
 # --- SCRIPT CORE ---
-# (No need to edit below this line for version changes)
 
 # Set up colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 BOLD='\033[1m'
-NC='\033[0m' # No Color
-
-# Setup logging
-LOG_FILE="/tmp/dev-env-setup-$(date +%Y%m%d-%H%M%S).log"
+NC='\033[0m'
 
 # Script needs to be run as root or with sudo
 if [ "$EUID" -ne 0 ]; then
@@ -36,18 +32,14 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Store the actual user who ran the script
-if [ -z "$SUDO_USER" ]; then
-  ACTUAL_USER="$(whoami)"
-else
-  ACTUAL_USER="$SUDO_USER"
-fi
+if [ -z "$SUDO_USER" ]; then ACTUAL_USER="$(whoami)"; else ACTUAL_USER="$SUDO_USER"; fi
 ACTUAL_HOME="$(eval echo ~"$ACTUAL_USER")"
 
 # --- HELPER FUNCTIONS ---
 
-log_error() { echo -e "${RED}ERROR: $1${NC}" | tee -a "$LOG_FILE"; }
-log_info() { echo -e "${BLUE}$1${NC}" | tee -a "$LOG_FILE"; }
-log_success() { echo -e "${GREEN}$1${NC}" | tee -a "$LOG_FILE"; }
+log_error() { echo -e "${RED}ERROR: $1${NC}"; }
+log_info() { echo -e "${BLUE}$1${NC}"; }
+log_success() { echo -e "${GREEN}$1${NC}"; }
 
 show_banner() {
   clear
@@ -60,20 +52,12 @@ show_banner() {
   echo ""
 }
 
-# Helper function to intelligently purge packages
 purge_packages() {
   local packages_to_remove=()
-  for pkg in "$@"; do
-    if dpkg -l | grep -q "ii  $pkg "; then
-      packages_to_remove+=("$pkg")
-    fi
-  done
-
+  for pkg in "$@"; do if dpkg -l | grep -q "ii  $pkg "; then packages_to_remove+=("$pkg"); fi; done
   if [ ${#packages_to_remove[@]} -gt 0 ]; then
     log_info "Purging packages: ${packages_to_remove[*]}"
-    if ! apt purge -y "${packages_to_remove[@]}"; then
-      log_error "Failed to purge: ${packages_to_remove[*]}"
-    fi
+    if ! apt purge -y "${packages_to_remove[@]}"; then log_error "Failed to purge packages."; fi
   fi
 }
 
@@ -89,12 +73,6 @@ install_build_essentials() {
   apt install -y build-essential make libssl-dev gettext unzip cmake
   log_success "Build tools installed."
 }
-install_terminal_definitions() {
-  log_info "Installing terminal definitions..."
-  apt install -y ncurses-term
-  log_success "Terminal definitions installed."
-}
-
 install_firewall() {
   log_info "Installing and configuring UFW firewall..."
   apt install -y ufw
@@ -103,7 +81,6 @@ install_firewall() {
   ufw status verbose
   log_success "Firewall enabled. SSH is allowed."
 }
-
 install_fail2ban() {
   log_info "Installing Fail2ban..."
   apt install -y fail2ban
@@ -116,32 +93,17 @@ install_zsh() {
   apt install -y zsh zplug
   if [ -f "$ACTUAL_HOME/.zshrc" ]; then mv "$ACTUAL_HOME/.zshrc" "$ACTUAL_HOME/.zshrc.bak"; fi
   cat >"$ACTUAL_HOME/.zshrc" <<EOL
-# Fix for modern terminals like Kitty
 export TERM=xterm
-
-# History settings
-HISTFILE=~/.zsh_history
-HISTSIZE=5000
-SAVEHIST=5000
-
-# Aliases for quick file editing
-alias ec="nvim ~/.zshrc"
-alias ep="nvim ~/.config/starship.toml"
-alias sc="source ~/.zshrc"
-alias ls="lsd"
-
-# Python aliases
+HISTFILE=~/.zsh_history; HISTSIZE=5000; SAVEHIST=5000
+alias ec="nvim ~/.zshrc"; alias ep="nvim ~/.config/starship.toml"; alias sc="source ~/.zshrc"; alias ls="lsd"; alias fd="fdfind"
 alias python='python3.12'
-
-# zplug plugin manager
 source /usr/share/zplug/init.zsh
-zplug "zsh-users/zsh-syntax-highlighting"
-zplug "zsh-users/zsh-autosuggestions"
+zplug "zsh-users/zsh-syntax-highlighting"; zplug "zsh-users/zsh-autosuggestions"
 if ! zplug check; then zplug install; fi
 zplug load
 EOL
   chown "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/.zshrc" && chsh -s "$(command -v zsh)" "$ACTUAL_USER"
-  log_success "ZSH setup completed. Shell will be switched at the end of the script."
+  log_success "ZSH setup completed."
 }
 
 install_starship() {
@@ -150,14 +112,85 @@ install_starship() {
   echo -e '\neval "$(starship init zsh)"' >>"$ACTUAL_HOME/.zshrc"
   mkdir -p "$ACTUAL_HOME/.config"
   cat >"$ACTUAL_HOME/.config/starship.toml" <<'EOL'
+# ~/.config/starship.toml
+
+# General prompt configuration
+format = """
+└── eris@m1 ➜ $directory$git_branch$git_status$python$nodejs$rust$golang$cmd_duration$time
+$character"""
+
+# Add a newline before the prompt
 add_newline = false
+
+# Customize the prompt symbol
 [character]
 success_symbol = "[➜](bold green)"
 error_symbol = "[➜](bold red)"
+vicmd_symbol = "[❖](bold green)"
+
+# Directory configuration
 [directory]
-truncation_length = 3
+style = "bold green"
+truncation_length = 4
+truncate_to_repo = true
+home_symbol = "⌂"
+read_only = " [!](bold red)"
 truncation_symbol = "…/"
-style = "bold blue"
+
+# Git branch
+[git_branch]
+format = " on [$branch](bold green)"
+
+# Git status
+[git_status]
+style = "bold red"
+stashed = " 📦"
+ahead = " ⇡"
+behind = " ⇣"
+diverged = " ⇕"
+untracked = " …"
+deleted = " 🗑"
+renamed = " »"
+modified = " !"
+staged = " +"
+
+# Python version display
+[python]
+pyenv_version_name = true
+format = " via [🐍 $version](bold green)"
+style = "bold green"
+
+# Node.js version display
+[nodejs]
+format = " via [⬢ $version](bold green)"
+style = "bold green"
+
+# Rust version display
+[rust]
+format = " via [🦀 $version](bold red)"
+
+# Go version display
+[golang]
+format = " via [🐹 $version](bold cyan)"
+
+# Time display
+[time]
+format = " at [$time](bold yellow)"
+time_format = "%H:%M:%S"
+style = "bold green"
+disabled = true
+
+# Command duration display
+[cmd_duration]
+format = " took [$duration](bold yellow)"
+style = "bold yellow"
+min_time = 1000
+
+# Disable unnecessary modules
+[package]
+disabled = true
+[battery]
+disabled = true
 EOL
   chown -R "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/.config"
   log_success "Starship prompt installed and configured."
@@ -176,6 +209,20 @@ install_utilities() {
   log_info "Installing utilities (ranger, lsd, etc)..."
   apt install -y curl wget htop tree iotop lsd ranger
   log_success "Utilities installed."
+}
+install_search_tools() {
+  log_info "Installing search tools (fzf, rg)..."
+  apt install -y fzf ripgrep fd-find
+  log_success "Search tools installed."
+}
+
+install_lazygit() {
+  log_info "Installing Lazygit..."
+  apt install -y software-properties-common
+  add-apt-repository ppa:lazygit-team/release -y
+  apt update
+  apt install -y lazygit
+  log_success "Lazygit installed successfully."
 }
 
 install_nvm_node() {
@@ -241,24 +288,18 @@ install_tmux() {
   sh autogen.sh && ./configure && make && make install
   su - "$ACTUAL_USER" -c "git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm"
   cat >"$ACTUAL_HOME/.tmux.conf" <<'EOL'
-set-option -g status-interval 60
-set-option -g status on
-set-option -g mouse on
-bind '"' split-window -v -c "#{pane_current_path}"
-bind % split-window -h -c "#{pane_current_path}"
+set-option -g status-interval 60; set-option -g status on; set-option -g mouse on
+bind '"' split-window -v -c "#{pane_current_path}"; bind % split-window -h -c "#{pane_current_path}"
 bind x kill-pane
-set-option -g default-terminal "tmux-256color"
-set -ga terminal-overrides ',xterm-256color:Tc'
+set-option -g default-terminal "tmux-256color"; set -ga terminal-overrides ',xterm-256color:Tc'
 bind-key -T copy-mode-vi y send -X copy-pipe-and-cancel "xsel -ib"
 set-option -g set-clipboard on
-set -g @plugin 'tmux-plugins/tpm'
-set -g @plugin 'catppuccin/tmux'
-set -g @catppuccin_flavor 'frappe'
+set -g @plugin 'tmux-plugins/tpm'; set -g @plugin 'catppuccin/tmux'; set -g @catppuccin_flavor 'frappe'
 run '~/.tmux/plugins/tpm/tpm'
 EOL
   chown "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/.tmux.conf"
   cd /tmp && rm -rf tmux
-  log_info "${BOLD}IMPORTANT: After starting tmux, press 'Prefix + I' (that's Ctrl+A then capital I) to install plugins."
+  log_info "${BOLD}IMPORTANT: After starting tmux, press 'Ctrl+A' then 'I' (capital i) to install plugins."
   log_success "Tmux and TPM installed."
 }
 
@@ -271,9 +312,7 @@ install_go() {
   cat >>"$ACTUAL_HOME/.zshrc" <<'EOL'
 
 # Go Language
-export PATH=$PATH:/usr/local/go/bin
-export GOPATH=$HOME/go
-export PATH=$PATH:$GOPATH/bin
+export PATH=$PATH:/usr/local/go/bin; export GOPATH=$HOME/go; export PATH=$PATH:$GOPATH/bin
 EOL
   mkdir -p "$ACTUAL_HOME/go/"{bin,pkg,src} && chown -R "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/go"
   rm -f "/tmp/$go_archive"
@@ -281,7 +320,12 @@ EOL
 }
 
 install_neovim() {
-  log_info "Installing latest Neovim stable..."
+  log_info "Installing Neovim, LazyVim, and all dependencies..."
+  log_info "--> Ensuring build tools, git, and search tools are installed..."
+  install_build_essentials
+  install_git
+  install_search_tools
+  log_info "--> Installing Neovim binary..."
   apt install -y tar gzip
   local nvim_dir="$ACTUAL_HOME/.local/nvim"
   mkdir -p "$nvim_dir"
@@ -290,9 +334,10 @@ install_neovim() {
   tar xzvf nvim-linux64.tar.gz -C "$nvim_dir" --strip-components 1
   chown -R "$ACTUAL_USER":"$ACTUAL_USER" "$nvim_dir"
   if ! grep -q "alias nvim=" "$ACTUAL_HOME/.zshrc"; then echo "alias nvim='$nvim_dir/bin/nvim'" >>"$ACTUAL_HOME/.zshrc"; fi
+  log_info "--> Cloning LazyVim starter configuration..."
   if [ ! -d "$ACTUAL_HOME/.config/nvim" ]; then su - "$ACTUAL_USER" -c "git clone https://github.com/LazyVim/starter ~/.config/nvim"; fi
   rm -f nvim-linux64.tar.gz
-  log_success "Neovim installed."
+  log_success "Neovim and LazyVim installed successfully."
 }
 
 install_rsync() {
@@ -305,20 +350,29 @@ install_rclone() {
   curl https://rclone.org/install.sh | bash
   log_success "rclone installed."
 }
+create_dev_directory() {
+  log_info "Creating DEV directory..."
+  mkdir -p "$ACTUAL_HOME/DEV" && chown "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/DEV"
+  log_success "DEV directory created."
+}
+configure_ssh_priority() {
+  log_info "Configuring SSH priority..."
+  mkdir -p /etc/systemd/system/ssh.service.d
+  echo -e "[Service]\nCPUSchedulingPolicy=rr\nCPUSchedulingPriority=99" >/etc/systemd/system/ssh.service.d/override.conf
+  systemctl daemon-reload && systemctl restart ssh
+  log_success "SSH priority configured."
+}
 
 create_zsh_compiler_script() {
   log_info "Creating Zsh compiler script..."
   cat >"$ACTUAL_HOME/compile-zsh.sh" <<'EOL'
 #!/bin/zsh
 FILES=("$HOME/.zshenv" "$HOME/.zshrc" "$HOME/.zprofile")
-echo "Cleaning up old .zwc files..."
-for file in "${FILES[@]}"; do if [ -f "$file.zwc" ]; then rm -v "$file.zwc"; fi; done
-echo "Compiling new .zwc files..."
-for file in "${FILES[@]}"; do if [ -f "$file" ]; then zcompile "$file"; fi; done
-echo "Compilation complete!"
+echo "Cleaning up old .zwc files..."; for file in "${FILES[@]}"; do if [ -f "$file.zwc" ]; then rm -v "$file.zwc"; fi; done
+echo "Compiling new .zwc files..."; for file in "${FILES[@]}"; do if [ -f "$file" ]; then zcompile "$file"; fi; done; echo "Compilation complete!"
 EOL
   chmod +x "$ACTUAL_HOME/compile-zsh.sh" && chown "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/compile-zsh.sh"
-  log_success "Zsh compiler script created at ~/compile-zsh.sh"
+  log_success "Zsh compiler script created."
 }
 
 generate_setup_report() {
@@ -327,44 +381,25 @@ generate_setup_report() {
 =================================
  SERVER SETUP REPORT & QUICK TIPS
 =================================
-This server was configured on $(date).
-
----
-## Security
----
 ### UFW (Firewall)
 - Status: $(ufw status | head -n 1)
 - To see rules: sudo ufw status numbered
 - To allow http: sudo ufw allow http
-- To delete a rule: sudo ufw delete [rule_number]
-
 ### Fail2ban
 - Status: $(systemctl is-active fail2ban)
-- Protects SSH from brute-force attacks automatically.
-- To check banned IPs: sudo fail2ban-client status sshd
-
----
-## Shell Environment
----
-### Zsh & Starship
-- Your default shell is Zsh with a Starship prompt.
+- Protects SSH. Check banned IPs: sudo fail2ban-client status sshd
+### Shell (Zsh & Starship)
 - To edit shell config: nvim ~/.zshrc
-- To edit prompt config: nvim ~/.config/starship.toml
-- To speed up shell start time: ./compile-zsh.sh
-
+- To speed up shell start: ./compile-zsh.sh
 ### Tmux
 - Prefix Key: Ctrl+A
 - To install plugins: Start tmux, press Ctrl+A then I (capital i)
-- New vertical split: Ctrl+A then %
-- New horizontal split: Ctrl+A then "
-
----
-## Utilities
----
-### Ranger, rclone, rsync
+### Lazygit & Ranger
+- To start git TUI: lazygit
 - To start file manager: ranger
+### rclone & rsync
 - To configure cloud sync: rclone config
-- To transfer files: rsync -avz /local/path user@remote:/remote/path
+- To transfer files: rsync -avz /local/path user@remote:/remote/
 EOL
   chown "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/setup-report.txt"
   log_success "Setup report created at ~/setup-report.txt"
@@ -372,10 +407,36 @@ EOL
 
 # --- UNINSTALLATION FUNCTIONS ---
 
+uninstall_all() {
+  log_info "Starting complete uninstallation..."
+  uninstall_neovim
+  uninstall_go
+  uninstall_tmux
+  uninstall_python_poetry
+  uninstall_docker
+  uninstall_rust
+  uninstall_nerd_font
+  uninstall_nvm_node
+  uninstall_utilities
+  uninstall_starship
+  uninstall_zsh
+  uninstall_firewall
+  uninstall_fail2ban
+  uninstall_rclone
+  uninstall_rsync
+  uninstall_search_tools
+  uninstall_lazygit
+  remove_dev_directory
+  unconfigure_ssh_priority
+  log_info "Cleaning up orphaned packages..."
+  apt autoremove -y
+  apt clean
+  log_success "All components uninstalled."
+}
 uninstall_neovim() {
   log_info "Uninstalling Neovim..."
-  rm -rf "$ACTUAL_HOME/.local/nvim" "$ACTUAL_HOME/.config/nvim" "$ACTUAL_HOME/.local/share/nvim"
-  sed -i "/alias nvim=.*nvim/d" "$ACTUAL_HOME/.zshrc"
+  rm -rf "$ACTUAL_HOME/.local/nvim" "$ACTUAL_HOME/.config/nvim"
+  sed -i "/alias nvim=/d" "$ACTUAL_HOME/.zshrc"
   log_success "Neovim uninstalled."
 }
 uninstall_go() {
@@ -446,6 +507,22 @@ uninstall_rclone() {
   rm -f /usr/bin/rclone /usr/local/share/man/man1/rclone.1
   log_success "rclone uninstalled."
 }
+uninstall_rsync() {
+  log_info "Uninstalling rsync..."
+  purge_packages rsync
+  log_success "rsync uninstalled."
+}
+uninstall_search_tools() {
+  log_info "Uninstalling search tools..."
+  purge_packages fzf ripgrep fd-find
+  log_success "Search tools uninstalled."
+}
+uninstall_lazygit() {
+  log_info "Uninstalling Lazygit..."
+  apt purge -y lazygit
+  add-apt-repository --remove ppa:lazygit-team/release -y
+  log_success "Lazygit uninstalled."
+}
 uninstall_firewall() {
   log_info "Disabling and uninstalling firewall..."
   ufw --force reset
@@ -457,27 +534,16 @@ uninstall_fail2ban() {
   apt purge -y fail2ban
   log_success "Fail2ban uninstalled."
 }
-
-uninstall_all() {
-  log_info "Starting complete uninstallation..."
-  uninstall_neovim
-  uninstall_go
-  uninstall_tmux
-  uninstall_python_poetry
-  uninstall_docker
-  uninstall_rust
-  uninstall_nerd_font
-  uninstall_nvm_node
-  uninstall_utilities
-  uninstall_starship
-  uninstall_zsh
-  uninstall_firewall
-  uninstall_fail2ban
-  uninstall_rclone
-  log_info "Cleaning up orphaned packages..."
-  apt autoremove -y
-  apt clean
-  log_success "All components uninstalled."
+remove_dev_directory() {
+  log_info "Removing DEV directory..."
+  rm -rf "$ACTUAL_HOME/DEV"
+  log_success "DEV directory removed."
+}
+unconfigure_ssh_priority() {
+  log_info "Removing SSH priority..."
+  rm -f /etc/systemd/system/ssh.service.d/override.conf
+  systemctl daemon-reload && systemctl restart ssh
+  log_success "SSH priority unconfigured."
 }
 
 # --- MENU AND MAIN LOGIC ---
@@ -485,7 +551,7 @@ uninstall_all() {
 show_menu() {
   show_banner
   echo -e "${BOLD}Installation Menu:${NC}"
-  echo -e "${BOLD}------------------${NC}"
+  echo "------------------"
   echo " 1) Update system packages"
   echo " 2) Install essential build tools"
   echo " 3) Install essential utilities (ranger, lsd, etc)"
@@ -502,12 +568,20 @@ show_menu() {
   echo
   echo -e "${BOLD}Development Tools:${NC}"
   echo " 10) Install Git & GitHub CLI"
-  echo " 11) Install NVM & Node.js"
-  echo " 12) Install Rust"
-  echo " 13) Install Go"
-  echo " 14) Install Python & Poetry"
-  echo " 15) Install Docker"
-  echo " 16) Install rclone (Cloud Sync)"
+  echo " 11) Install Lazygit"
+  echo " 12) Install Search Tools (fzf, ripgrep)"
+  echo " 13) Install NVM & Node.js"
+  echo " 14) Install Rust"
+  echo " 15) Install Go"
+  echo " 16) Install Python & Poetry"
+  echo " 17) Install Docker"
+  echo " 18) Install Neovim & LazyVim"
+  echo
+  echo -e "${BOLD}System & Misc:${NC}"
+  echo " 19) Install rclone (Cloud Sync)"
+  echo " 20) Install rsync"
+  echo " 21) Create DEV directory"
+  echo " 22) Configure SSH with real-time priority"
   echo
   echo " 0) Install ALL (recommended)"
   echo -e "99) ${RED}Uninstall ALL${NC}"
@@ -526,9 +600,8 @@ main() {
       echo "Exiting script."
       exit 0
       ;;
-    # Logical order for a complete, secure setup
     0)
-      tasks=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16)
+      tasks=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22)
       will_exec_zsh=true
       ;;
     99) read -r -p "$(echo -e ${RED}${BOLD}"Sure? This will remove ALL script-installed components. [y/N] "${NC})" confirm && [[ "$confirm" =~ ^[yY]$ ]] && uninstall_all ;;
@@ -538,12 +611,12 @@ main() {
       for choice in "${tasks[@]}"; do
         case "$choice" in
         1) update_system ;; 2) install_build_essentials ;; 3) install_utilities ;; 4) install_firewall ;; 5) install_fail2ban ;; 6) install_zsh ;;
-        7) install_starship ;; 8) install_nerd_font ;; 9) install_tmux ;; 10) install_git ;; 11) install_nvm_node ;; 12) install_rust ;;
-        13) install_go ;; 14) install_python_poetry ;; 15) install_docker ;; 16) install_rclone ;;
+        7) install_starship ;; 8) install_nerd_font ;; 9) install_tmux ;; 10) install_git ;; 11) install_lazygit ;; 12) install_search_tools ;;
+        13) install_nvm_node ;; 14) install_rust ;; 15) install_go ;; 16) install_python_poetry ;; 17) install_docker ;; 18) install_neovim ;;
+        19) install_rclone ;; 20) install_rsync ;; 21) create_dev_directory ;; 22) configure_ssh_priority ;;
         *) log_error "Invalid choice: $choice" ;;
         esac
       done
-
       if [ "$will_exec_zsh" = true ]; then
         create_zsh_compiler_script
         generate_setup_report
