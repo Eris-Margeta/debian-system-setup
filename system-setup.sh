@@ -3,7 +3,7 @@
 # Remote Development Environment Setup Script
 # For Debian/Ubuntu-based systems
 # ==========================================================
-# Version: 3.2.0 (Production)
+# Version: 3.1.1 (Final Production with TOML fix)
 # Last Updated: Dec 3, 2025
 
 # --- CONFIGURATION ---
@@ -113,14 +113,22 @@ install_starship() {
   mkdir -p "$ACTUAL_HOME/.config"
   cat >"$ACTUAL_HOME/.config/starship.toml" <<'EOL'
 # ~/.config/starship.toml
+
+# General prompt configuration
 format = """
-└── eris@m1 ➜ $directory$git_branch$git_status$python$nodejs$rust$golang$cmd_duration$time
+$directory$git_branch$git_status$python$nodejs$rust$golang$cmd_duration
 $character"""
-add_newline = false
+
+# Add a newline before the prompt
+add_newline = true
+
+# Customize the prompt symbol
 [character]
 success_symbol = "[➜](bold green)"
 error_symbol = "[➜](bold red)"
 vicmd_symbol = "[❖](bold green)"
+
+# Directory configuration
 [directory]
 style = "bold green"
 truncation_length = 4
@@ -128,22 +136,46 @@ truncate_to_repo = true
 home_symbol = "⌂"
 read_only = " [!](bold red)"
 truncation_symbol = "…/"
+
+# Git branch
 [git_branch]
 format = " on [$branch](bold green)"
+
+# Git status
 [git_status]
 style = "bold red"
-stashed = " 📦"; ahead = " ⇡"; behind = " ⇣"; diverged = " ⇕"; untracked = " …"; deleted = " 🗑"; renamed = " »"; modified = " !"; staged = " +"
+stashed = " 📦"
+ahead = " ⇡"
+behind = " ⇣"
+diverged = " ⇕"
+untracked = " …"
+deleted = " 🗑"
+renamed = " »"
+modified = " !"
+staged = " +"
+
+# Python version display
 [python]
 format = " via [🐍 $version](bold green)"
+
+# Node.js version display
 [nodejs]
 format = " via [⬢ $version](bold green)"
+
+# Rust version display
 [rust]
 format = " via [🦀 $version](bold red)"
+
+# Go version display
 [golang]
 format = " via [🐹 $version](bold cyan)"
+
+# Command duration display
 [cmd_duration]
 format = " took [$duration](bold yellow)"
 min_time = 1000
+
+# Disable unnecessary modules
 [package]
 disabled = true
 [battery]
