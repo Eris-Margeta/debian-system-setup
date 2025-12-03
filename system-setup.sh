@@ -3,7 +3,7 @@
 # Remote Development Environment Setup Script
 # For Debian/Ubuntu-based systems
 # ==========================================================
-# Version: 2.5.0
+# Version: 2.6.0
 # Last Updated: Dec 3, 2025
 
 # --- CONFIGURATION ---
@@ -125,7 +125,7 @@ if ! zplug check; then zplug install; fi
 zplug load
 EOL
   chown "$ACTUAL_USER:$ACTUAL_USER" "$ACTUAL_HOME/.zshrc" && chsh -s "$(command -v zsh)" "$ACTUAL_USER"
-  log_success "ZSH setup completed. Please reload your shell to apply changes."
+  log_success "ZSH setup completed. Shell will be switched at the end of the script."
 }
 
 install_git() {
@@ -137,7 +137,6 @@ install_git() {
   apt update && apt install -y gh
   log_success "Git & GitHub CLI installed."
 }
-
 install_utilities() {
   log_info "Installing utilities..."
   apt install -y curl wget htop tree iotop lsd
@@ -183,14 +182,12 @@ install_nerd_font() {
   rm -f Hack.zip
   log_success "Nerd Font installed."
 }
-
 install_rust() {
   log_info "Installing Rust..."
   su - "$ACTUAL_USER" -c "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"
   echo 'source "$HOME/.cargo/env"' >>"$ACTUAL_HOME/.zshrc"
   log_success "Rust installed."
 }
-
 install_docker() {
   log_info "Installing Docker..."
   apt install -y ca-certificates curl
@@ -261,12 +258,8 @@ install_neovim() {
   curl -L -o nvim-linux64.tar.gz "$NEOVIM_URL"
   tar xzvf nvim-linux64.tar.gz -C "$nvim_dir" --strip-components 1
   chown -R "$ACTUAL_USER":"$ACTUAL_USER" "$nvim_dir"
-  if ! grep -q "alias nvim=" "$ACTUAL_HOME/.zshrc"; then
-    echo "alias nvim='$nvim_dir/bin/nvim'" >>"$ACTUAL_HOME/.zshrc"
-  fi
-  if [ ! -d "$ACTUAL_HOME/.config/nvim" ]; then
-    su - "$ACTUAL_USER" -c "git clone https://github.com/LazyVim/starter ~/.config/nvim"
-  fi
+  if ! grep -q "alias nvim=" "$ACTUAL_HOME/.zshrc"; then echo "alias nvim='$nvim_dir/bin/nvim'" >>"$ACTUAL_HOME/.zshrc"; fi
+  if [ ! -d "$ACTUAL_HOME/.config/nvim" ]; then su - "$ACTUAL_USER" -c "git clone https://github.com/LazyVim/starter ~/.config/nvim"; fi
   rm -f nvim-linux64.tar.gz
   log_success "Neovim installed."
 }
@@ -292,6 +285,27 @@ optimize_zsh() {
   log_info "Applying ZSH optimizations..."
   echo "alias update='sudo apt update && sudo apt upgrade -y'" >>"$ACTUAL_HOME/.zshrc"
   log_success "ZSH optimizations applied."
+}
+
+migrate_bashrc() {
+  log_info "Migrating compatible settings from .bashrc to .zshrc..."
+  if [ ! -f "$ACTUAL_HOME/.bashrc" ]; then
+    log_info ".bashrc not found, skipping migration."
+    return
+  fi
+
+  # Create a header in .zshrc to denote migrated settings
+  echo -e "\n# --- Migrated from .bashrc ---" >>"$ACTUAL_HOME/.zshrc"
+
+  # Read uncommented, non-empty lines from .bashrc
+  grep -vE '^(#|$)' "$ACTUAL_HOME/.bashrc" | while read -r line; do
+    # Check if the exact line already exists in .zshrc to avoid duplicates
+    if ! grep -qFx -- "$line" "$ACTUAL_HOME/.zshrc"; then
+      log_info "  -> Migrating: $line"
+      echo "$line" >>"$ACTUAL_HOME/.zshrc"
+    fi
+  done
+  log_success ".bashrc migration complete."
 }
 
 # --- UNINSTALLATION FUNCTIONS ---
@@ -486,13 +500,16 @@ show_menu() {
 main() {
   while true; do
     show_menu
+    local will_exec_zsh=false
     case "$choices" in
     q | Q)
       echo "Exiting script."
       exit 0
       ;;
-    # This is the new, logical installation order for "Install ALL"
-    0) tasks=(1 3 2 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21) ;;
+    0)
+      tasks=(1 3 2 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21)
+      will_exec_zsh=true
+      ;;
     99) read -r -p "$(echo -e ${RED}${BOLD}"Sure? This will remove all script-installed components. [y/N] "${NC})" confirm && [[ "$confirm" =~ ^[yY]$ ]] && uninstall_all ;;
     *) tasks=($choices) ;;
     esac
@@ -506,9 +523,24 @@ main() {
         *) log_error "Invalid choice: $choice" ;;
         esac
       done
-      if [[ " ${tasks[*]} " =~ " 0 " ]]; then
+
+      if [ "$will_exec_zsh" = true ]; then
+        migrate_bashrc
         log_success "${BOLD}All tasks completed!"
-        log_info "${BOLD}IMPORTANT: Please log out and log back in, or run 'exec zsh' to apply all changes."
+
+        # Verbose shell check
+        log_info "Performing final shell verification..."
+        local new_shell
+        new_shell=$(getent passwd "$ACTUAL_USER" | cut -d: -f7)
+        log_info "Default shell for user '$ACTUAL_USER' is now set to: $new_shell"
+
+        log_info "${BOLD}The script will now switch your current session to Zsh."
+        log_info "For future sessions, you can switch manually by:"
+        log_info "1. Exiting and logging back in (recommended)."
+        log_info "2. Typing 'exec zsh' in a bash session."
+
+        read -n 1 -s -r -p "Press any key to switch to Zsh..."
+        exec su - "$ACTUAL_USER" -c zsh
       else
         log_success "Selected tasks completed!"
       fi

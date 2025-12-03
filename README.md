@@ -3,7 +3,7 @@
 ## USAGE: 
 
 ```bash
-curl -s https://raw.githubusercontent.com/Eris-Margeta/debian-system-setup/master/system-setup.sh -o setup.sh && chmod +x setup.sh && sudo ./setup.sh
+curl -sL https://raw.githubusercontent.com/Eris-Margeta/debian-system-setup/master/system-setup.sh -o setup.sh && chmod +x setup.sh && sudo ./setup.sh
 ```
 
 This script automates the setup of a complete development environment on a fresh Debian or Ubuntu-based server. It installs everything from build tools and programming languages (Go, Rust, Node, Python) to modern tools like Docker, Neovim (with a LazyVim starter config), and Zsh.
@@ -13,10 +13,21 @@ It is designed to be idempotent, configurable, and includes a complete uninstall
 ## Features
 
 - **Automated Setup**: Installs a wide range of development tools with a single command.
+- **Smart Installation Order**: Prioritizes setting up the Zsh shell environment first to ensure all subsequent tools are configured correctly.
+- **Automatic Shell Switching**: After a full installation, the script automatically switches your session to the new Zsh shell.
+- **`.bashrc` Migration**: Intelligently copies existing configurations from `.bashrc` to `.zshrc` so you don't lose important paths (like for `cargo`).
 - **Easy to Update**: Key software versions are defined in a configuration section at the top of the script for easy future updates.
-- **Interactive Menu**: Choose exactly what you want to install.
-- **Full Uninstallation**: A single command can revert (almost) all changes made by the script, cleaning up packages, configuration files, and installed binaries.
+- **Interactive Menu**: Choose exactly what you want to install, or run the full setup.
+- **Full Uninstallation**: A single command can revert all changes made by the script, cleaning up packages, configuration files, and installed binaries.
 - **User-Context Aware**: Safely installs user-specific tools (like NVM and Rust) for the user who invokes the script, even when run with `sudo`.
+
+## The "Install ALL" Process
+
+When you choose option `0` to install everything, the script follows a specific, logical sequence for the best results:
+1.  **System Prep**: Updates packages and installs essential build tools and utilities like `curl`.
+2.  **Shell Setup**: **Immediately installs Zsh** and sets it as the default login shell for your user.
+3.  **Tool Installation**: Installs all other development tools (NVM, Rust, Go, etc.). Because Zsh is already the default, these tools correctly add their path configurations to `~/.zshrc`.
+4.  **Finalization**: Migrates any leftover settings from `~/.bashrc`, verifies the new shell is set correctly, and automatically runs `exec zsh` to drop you into your new, fully configured environment.
 
 ## Easy Updates & Configuration
 
