@@ -3,7 +3,7 @@
 # Remote Development Environment Setup Script
 # TARGET: DEBIAN 13 (TRIXIE)
 # ==========================================================
-# Version: 5.1.0 (Slimmed Neovim Dependencies)
+# Version: 6.0.0 (Apt Tmux & Verification Test)
 # Last Updated: Dec 7, 2025
 
 # --- CONFIGURATION ---
@@ -12,7 +12,7 @@
 # GENERAL
 GO_VERSION="1.25.4"
 NVM_VERSION="0.39.7"
-TMUX_VERSION="3.5a"
+# TMUX_VERSION is no longer needed as we install from apt.
 NEOVIM_URL="https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz"
 
 # SCRIPT BEHAVIOR
@@ -24,6 +24,7 @@ ENABLE_LOGGING=true # Set to false to disable logging to a file.
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
 BOLD='\033[1m'
 NC='\033[0m'
 
@@ -316,12 +317,13 @@ install_python_poetry() {
 
 install_tmux() {
   log_info "Installing tmux, TPM, and Catppuccin theme..."
-  apt install -y build-essential libevent-dev libncurses5-dev bison git
-  cd /tmp || return 1
-  git clone https://github.com/tmux/tmux.git && cd tmux
-  git checkout "$TMUX_VERSION"
-  sh autogen.sh && ./configure && make && make install
+  # Install tmux directly from apt - much faster and more reliable
+  apt install -y tmux git
+
+  # Install the Tmux Plugin Manager (TPM)
   su - "$ACTUAL_USER" -c "git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm"
+
+  # Create the user's tmux configuration file
   cat >"$ACTUAL_HOME/.tmux.conf" <<'EOL'
 set-option -g status-interval 60; set-option -g status on; set-option -g mouse on
 bind '"' split-window -v -c "#{pane_current_path}"; bind % split-window -h -c "#{pane_current_path}"
@@ -331,7 +333,6 @@ set -g @plugin 'tmux-plugins/tpm'; set -g @plugin 'catppuccin/tmux'; set -g @cat
 run '~/.tmux/plugins/tpm/tpm'
 EOL
   chown "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/.tmux.conf"
-  cd /tmp && rm -rf tmux
   log_info "${BOLD}IMPORTANT: After starting tmux, press 'Ctrl+A' then 'I' (capital i) to install plugins."
   log_success "Tmux and TPM installed."
 }
@@ -495,7 +496,7 @@ uninstall_go() {
 }
 uninstall_tmux() {
   log_info "Uninstalling tmux..."
-  rm -f /usr/local/bin/tmux
+  purge_packages tmux
   rm -rf "$ACTUAL_HOME/.tmux.conf" "$ACTUAL_HOME/.tmux"
   log_success "Tmux uninstalled."
 }
@@ -574,7 +575,6 @@ uninstall_search_tools() {
 }
 uninstall_lazygit() {
   log_info "Uninstalling Lazygit..."
-  # Purge the apt version, which is standard on Debian 13
   apt purge -y lazygit >/dev/null 2>&1
   log_success "Lazygit uninstalled."
 }
@@ -601,6 +601,83 @@ unconfigure_ssh_priority() {
   log_success "SSH priority unconfigured."
 }
 
+# --- NEW: Verification Function ---
+verify_system() {
+  log_info "Starting system verification. Note: This checks the environment for the user '$ACTUAL_USER'."
+
+  # Define local variables for the check
+  local TOTAL_CHECKS=0
+  local PASSED_CHECKS=0
+
+  # Define a local check function
+  check() {
+    ((TOTAL_CHECKS++))
+    local DESCRIPTION=$1
+    local COMMAND_TO_RUN=$2
+    printf "${BLUE}%-50s${NC}" "$DESCRIPTION"
+    # Run the command as the actual user where appropriate to check user-specific files
+    if eval "su - $ACTUAL_USER -c '$COMMAND_TO_RUN'" >/dev/null 2>&1; then
+      printf "[ ${GREEN}PASSED${NC} ]\n"
+      ((PASSED_CHECKS++))
+    else
+      # Fallback for system-level commands that need root
+      if eval "$COMMAND_TO_RUN" >/dev/null 2>&1; then
+        printf "[ ${GREEN}PASSED${NC} ]\n"
+        ((PASSED_CHECKS++))
+      else
+        printf "[ ${RED}FAILED${NC} ]\n"
+      fi
+    fi
+  }
+
+  echo -e "\n${YELLOW}${BOLD}--- Security ---${NC}"
+  check "UFW Firewall is active" "ufw status | grep -q 'Status: active'"
+  check "Fail2ban service is running" "systemctl is-active --quiet fail2ban"
+
+  echo -e "\n${YELLOW}${BOLD}--- Shell Environment ---${NC}"
+  check "Zsh is installed" "command -v zsh"
+  check "Starship prompt is installed" "command -v starship"
+  check "Tmux is installed" "command -v tmux"
+  check "Nerd Fonts directory exists" "'[ -d ~/.local/share/fonts ] && [ -n \"\$(ls -A ~/.local/share/fonts)\" ]'"
+  check "Zsh configuration file exists" "'[ -f ~/.zshrc ]'"
+  check "Starship configuration file exists" "'[ -f ~/.config/starship.toml ]'"
+  check "Tmux configuration file exists" "'[ -f ~/.tmux.conf ]'"
+
+  echo -e "\n${YELLOW}${BOLD}--- Development Tools ---${NC}"
+  check "Git is installed" "command -v git"
+  check "GitHub CLI (gh) is installed" "command -v gh"
+  check "Lazygit is installed" "command -v lazygit"
+  check "fzf is installed" "command -v fzf"
+  check "ripgrep (rg) is installed" "command -v rg"
+  check "fd (fdfind) is installed" "command -v fdfind"
+  check "NVM, node, and npm are available" "'source ~/.nvm/nvm.sh && command -v node && command -v npm'"
+  check "Rust (rustc) is available" "'source ~/.cargo/env && command -v rustc'"
+  check "Go is installed" "command -v go"
+  local PY_EXEC
+  PY_EXEC=$(command -v python3.13)
+  check "Python is installed ($PY_EXEC)" "[ -n \"$PY_EXEC\" ]"
+  check "Poetry is available" "'source ~/.zshrc && command -v poetry'"
+  check "Docker service is running" "systemctl is-active --quiet docker"
+  check "Neovim binary exists" "'[ -x ~/.local/nvim/bin/nvim ]'"
+  check "Neovim config (LazyVim) exists" "'[ -d ~/.config/nvim ]'"
+
+  echo -e "\n${YELLOW}${BOLD}--- System & Miscellaneous ---${NC}"
+  check "rclone is installed" "command -v rclone"
+  check "rsync is installed" "command -v rsync"
+  check "DEV directory exists" "'[ -d ~/DEV ]'"
+  check "SSH real-time priority is configured" "'[ -f /etc/systemd/system/ssh.service.d/override.conf ]'"
+  check "Zsh compiler script exists" "'[ -f ~/compile-zsh.sh ]'"
+  check "Setup report exists" "'[ -f ~/setup-report.txt ]'"
+
+  echo -e "\n${BLUE}${BOLD}--- Verification Summary ---${NC}"
+  echo -e "${BOLD}Checks Passed: $PASSED_CHECKS / $TOTAL_CHECKS${NC}\n"
+  if [ "$PASSED_CHECKS" -eq "$TOTAL_CHECKS" ]; then
+    echo -e "${GREEN}${BOLD}🎉 All checks passed! Your environment appears to be fully set up.${NC}"
+  else
+    echo -e "${RED}${BOLD}🔥 Some checks failed. Please review the output above.${NC}"
+  fi
+}
+
 # --- MENU AND MAIN LOGIC ---
 
 show_menu() {
@@ -608,7 +685,9 @@ show_menu() {
   echo -e "${BOLD}Installation Menu:${NC}"
   echo "------------------"
   echo " A) Configure APT sources & Update System (RECOMMENDED FIRST)"
-  echo " 1) Update system packages (if sources are already configured)"
+  echo " T) Test System (Verify Installation)"
+  echo
+  echo " 1) Update system packages"
   echo " 2) Install essential build tools"
   echo " 3) Install essential utilities (ranger, lsd, etc)"
   echo
@@ -666,7 +745,7 @@ main() {
     if [[ -n "${tasks-}" ]]; then
       for choice in "${tasks[@]}"; do
         case "$choice" in
-        A | a) configure_apt_sources ;; 1) update_system ;; 2) install_build_essentials ;; 3) install_utilities ;; 4) install_firewall ;; 5) install_fail2ban ;; 6) install_zsh ;;
+        A | a) configure_apt_sources ;; T | t) verify_system ;; 1) update_system ;; 2) install_build_essentials ;; 3) install_utilities ;; 4) install_firewall ;; 5) install_fail2ban ;; 6) install_zsh ;;
         7) install_starship ;; 8) install_nerd_font ;; 9) install_tmux ;; 10) install_git ;; 11) install_lazygit ;; 12) install_search_tools ;;
         13) install_nvm_node ;; 14) install_rust ;; 15) install_go ;; 16) install_python_poetry ;; 17) install_docker ;; 18) install_neovim ;;
         19) install_rclone ;; 20) install_rsync ;; 21) create_dev_directory ;; 22) configure_ssh_priority ;;
