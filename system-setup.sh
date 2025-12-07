@@ -1,20 +1,22 @@
 #!/bin/bash
 # ==========================================================
 # Remote Development Environment Setup Script
-# For Debian/Ubuntu-based systems
+# TARGET: DEBIAN 13 (TRIXIE)
 # ==========================================================
-# Version: 4.0.0 (Apt-based Python & Lazygit)
+# Version: 5.0.0 (Debian 13 Hardened)
 # Last Updated: Dec 7, 2025
 
 # --- CONFIGURATION ---
-# Easily update software versions here in the future.
+# Easily update software versions and settings here in the future.
 
+# GENERAL
 GO_VERSION="1.25.4"
-# PYTHON_VERSION is now detected automatically from apt to ensure compatibility.
 NVM_VERSION="0.39.7"
 TMUX_VERSION="3.5a"
-# Fetches the latest stable Neovim for x86_64 architecture (standard for Hetzner)
 NEOVIM_URL="https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz"
+
+# SCRIPT BEHAVIOR
+ENABLE_LOGGING=true # Set to false to disable logging to a file.
 
 # --- SCRIPT CORE ---
 
@@ -35,6 +37,22 @@ fi
 if [ -z "$SUDO_USER" ]; then ACTUAL_USER="$(whoami)"; else ACTUAL_USER="$SUDO_USER"; fi
 ACTUAL_HOME="$(eval echo ~"$ACTUAL_USER")"
 
+# Configure logging if enabled
+if [ "$ENABLE_LOGGING" = true ]; then
+  LOG_FILE="$ACTUAL_HOME/setup-log-$(date +'%Y-%m-%d_%H-%M-%S').txt"
+  # Redirect stdout and stderr to a log file while also printing to the console
+  exec &> >(tee -a "$LOG_FILE")
+  chown "$ACTUAL_USER":"$ACTUAL_USER" "$LOG_FILE"
+  echo "Logging enabled. Output is being saved to $LOG_FILE"
+fi
+
+# Verify Debian Version
+if ! grep -q 'VERSION_CODENAME=trixie' /etc/os-release; then
+  log_error "This script is specifically designed for Debian 13 (Trixie)."
+  log_error "Your system appears to be a different version. Aborting."
+  exit 1
+fi
+
 # --- HELPER FUNCTIONS ---
 
 log_error() { echo -e "${RED}ERROR: $1${NC}"; }
@@ -46,6 +64,7 @@ show_banner() {
   echo -e "${BLUE}${BOLD}"
   echo "====================================================="
   echo "      Remote Development Environment Setup Script    "
+  echo "                (For Debian 13 Trixie)               "
   echo "====================================================="
   echo -e "${NC}"
   echo "This script will set up your development environment."
@@ -62,6 +81,28 @@ purge_packages() {
 }
 
 # --- INSTALLATION FUNCTIONS ---
+
+configure_apt_sources() {
+  log_info "Configuring APT to use official Debian mirrors for maximum compatibility..."
+  # Back up existing configuration robustly
+  if [ -d "/etc/apt/sources.list.d" ]; then mv /etc/apt/sources.list.d /etc/apt/sources.list.d.bak; fi
+  if [ -f "/etc/apt/sources.list" ]; then mv /etc/apt/sources.list /etc/apt/sources.list.bak; fi
+  mkdir -p /etc/apt/sources.list.d # Ensure the directory exists for other installers
+
+  # Create a new, clean sources.list pointing to official Debian repos
+  tee /etc/apt/sources.list >/dev/null <<'EOF'
+deb http://deb.debian.org/debian/ trixie main contrib non-free-firmware
+deb-src http://deb.debian.org/debian/ trixie main contrib non-free-firmware
+
+deb http://deb.debian.org/debian-security/ trixie-security main contrib non-free-firmware
+deb-src http://deb.debian.org/debian-security/ trixie-security main contrib non-free-firmware
+
+deb http://deb.debian.org/debian/ trixie-updates main contrib non-free-firmware
+deb-src http://deb.debian.org/debian/ trixie-updates main contrib non-free-firmware
+EOF
+  log_success "APT sources configured to use official Debian mirrors."
+  update_system
+}
 
 update_system() {
   log_info "Updating system packages..."
@@ -92,10 +133,9 @@ install_zsh() {
   log_info "Installing ZSH and zplug..."
   apt install -y zsh zplug
   if [ -f "$ACTUAL_HOME/.zshrc" ]; then mv "$ACTUAL_HOME/.zshrc" "$ACTUAL_HOME/.zshrc.bak"; fi
-  # Detect the python executable for the alias
   local python_executable
-  python_executable=$(apt-cache search --names-only '^python3\.[0-9]+$' | sort -V | tail -n 1)
-  if [ -z "$python_executable" ]; then python_executable="python3"; fi # Fallback
+  python_executable=$(apt-cache search --names-only '^python3\.[0-9]+$' | sort -V | tail -n 1 | awk '{print $1}')
+  if [ -z "$python_executable" ]; then python_executable="python3"; fi
 
   cat >"$ACTUAL_HOME/.zshrc" <<EOL
 export TERM=xterm
@@ -118,22 +158,14 @@ install_starship() {
   mkdir -p "$ACTUAL_HOME/.config"
   cat >"$ACTUAL_HOME/.config/starship.toml" <<'EOL'
 # ~/.config/starship.toml
-
-# General prompt configuration
 format = """
 $directory$git_branch$git_status$python$nodejs$rust$golang$cmd_duration
 $character"""
-
-# Add a newline before the prompt
 add_newline = true
-
-# Customize the prompt symbol
 [character]
 success_symbol = "[➜](bold green)"
 error_symbol = "[➜](bold red)"
 vicmd_symbol = "[❖](bold green)"
-
-# Directory configuration
 [directory]
 style = "bold green"
 truncation_length = 4
@@ -141,12 +173,8 @@ truncate_to_repo = true
 home_symbol = "⌂"
 read_only = " [!](bold red)"
 truncation_symbol = "…/"
-
-# Git branch
 [git_branch]
 format = " on [$branch](bold green)"
-
-# Git status
 [git_status]
 style = "bold red"
 stashed = " 📦"
@@ -158,29 +186,17 @@ deleted = " 🗑"
 renamed = " »"
 modified = " !"
 staged = " +"
-
-# Python version display
 [python]
 format = " via [🐍 $version](bold green)"
-
-# Node.js version display
 [nodejs]
 format = " via [⬢ $version](bold green)"
-
-# Rust version display
 [rust]
 format = " via [🦀 $version](bold red)"
-
-# Go version display
 [golang]
 format = " via [🐹 $version](bold cyan)"
-
-# Command duration display
 [cmd_duration]
 format = " took [$duration](bold yellow)"
 min_time = 1000
-
-# Disable unnecessary modules
 [package]
 disabled = true
 [battery]
@@ -193,12 +209,20 @@ EOL
 install_git() {
   log_info "Installing Git & GitHub CLI..."
   apt install -y git
-  curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg
-  chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+
+  if [ ! -f "/usr/share/keyrings/githubcli-archive-keyring.gpg" ]; then
+    log_info "Downloading GitHub CLI GPG key..."
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+  else
+    log_info "GitHub CLI GPG key already exists. Skipping download."
+  fi
+
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" >/etc/apt/sources.list.d/github-cli.list
   apt update && apt install -y gh
   log_success "Git & GitHub CLI installed."
 }
+
 install_utilities() {
   log_info "Installing utilities (ranger, lsd, etc)..."
   apt install -y curl wget htop tree iotop lsd ranger
@@ -211,31 +235,8 @@ install_search_tools() {
 }
 
 install_lazygit() {
-  log_info "Installing Lazygit..."
-  # Source os-release to get VERSION_CODENAME
-  if [ -f /etc/os-release ]; then
-    . /etc/os-release
-  else
-    log_error "Cannot determine Debian version. /etc/os-release not found."
-    return 1
-  fi
-
-  # Check if the version is Trixie/Sid or later
-  if [[ "$VERSION_CODENAME" == "trixie" || "$VERSION_CODENAME" == "sid" ]]; then
-    log_info "Debian $VERSION_CODENAME detected. Installing lazygit via apt..."
-    apt install -y lazygit
-  else
-    log_info "Debian $VERSION_CODENAME detected. Installing lazygit via binary download..."
-    LAZYGIT_VERSION=$(curl -s "https://api.github.com/repos/jesseduffield/lazygit/releases/latest" | grep -Po '"tag_name": *"v\K[^"]*')
-    if [ -z "$LAZYGIT_VERSION" ]; then
-      log_error "Could not fetch latest lazygit version from GitHub API."
-      return 1
-    fi
-    curl -Lo lazygit.tar.gz "https://github.com/jesseduffield/lazygit/releases/download/v${LAZYGIT_VERSION}/lazygit_${LAZYGIT_VERSION}_Linux_x86_64.tar.gz"
-    tar xf lazygit.tar.gz lazygit
-    install lazygit -D -t /usr/local/bin/
-    rm lazygit lazygit.tar.gz
-  fi
+  log_info "Installing Lazygit for Debian 13 (Trixie) via apt..."
+  apt install -y lazygit
   log_success "Lazygit installed successfully."
 }
 
@@ -283,24 +284,19 @@ install_docker() {
 
 install_python_poetry() {
   log_info "Installing Python and Poetry via apt..."
-
-  # --- DYNAMICALLY DETECT LATEST PYTHON VERSION ---
   log_info "Detecting latest available Python 3 version from apt..."
-  PYTHON_EXECUTABLE=$(apt-cache search --names-only '^python3\.[0-9]+$' | sort -V | tail -n 1)
+  PYTHON_EXECUTABLE=$(apt-cache search --names-only '^python3\.[0-9]+$' | sort -V | tail -n 1 | awk '{print $1}')
 
   if [ -z "$PYTHON_EXECUTABLE" ]; then
-    log_error "Could not automatically detect a suitable Python 3 version from apt."
-    log_error "Please check your repository configuration. Aborting Python setup."
+    log_error "Could not automatically detect a suitable Python 3 version from apt. Aborting."
     return 1
   fi
   log_info "Detected latest available version: $GREEN$PYTHON_EXECUTABLE${NC}"
 
-  # --- INSTALL PYTHON AND DEPENDENCIES ---
   log_info "Installing $PYTHON_EXECUTABLE, its development packages, and required libraries..."
   apt install -y "$PYTHON_EXECUTABLE" "${PYTHON_EXECUTABLE}-venv" "${PYTHON_EXECUTABLE}-dev" python3-pip libffi-dev
   log_success "Python installation complete."
 
-  # --- INSTALL POETRY ---
   log_info "Performing a clean installation of Poetry..."
   su - "$ACTUAL_USER" -c "curl -sSL https://install.python-poetry.org | $PYTHON_EXECUTABLE - --uninstall" >/dev/null 2>&1 || true
   su - "$ACTUAL_USER" -c "rm -rf ~/.local/bin/poetry ~/.local/share/pypoetry ~/.cache/pypoetry"
@@ -510,26 +506,22 @@ uninstall_tmux() {
 }
 uninstall_python_poetry() {
   log_info "Uninstalling Poetry & Python..."
-
-  # Remove Poetry first and most robustly by deleting its files.
   su - "$ACTUAL_USER" -c "rm -rf ~/.local/bin/poetry ~/.local/share/pypoetry ~/.cache/pypoetry"
   sed -i -e '/# Add Poetry to PATH/d' -e '/\.local\/bin/d' "$ACTUAL_HOME/.zshrc"
   log_info "Poetry files removed."
 
-  # Purge all python3.x packages managed by apt. The wildcard is important.
   log_info "Purging all apt-managed python3.* packages..."
-  # Use a subshell to safely expand the package list
   packages_to_purge=$(dpkg -l | grep 'python3\.[0-9]\+' | awk '{print $2}' | tr '\n' ' ')
   if [ -n "$packages_to_purge" ]; then
     purge_packages "$packages_to_purge"
   fi
-  apt autoremove -y # Clean up dependencies
+  apt autoremove -y
   log_success "Poetry & Python uninstalled."
 }
 uninstall_docker() {
   log_info "Uninstalling Docker..."
   purge_packages docker-ce docker-ce-cli containerd.io
-  rm -f /etc/apt/sources.list.d/docker.list
+  rm -f /etc/apt/sources.list.d/docker.list /usr/share/keyrings/docker.gpg
   apt update >/dev/null
   log_success "Docker uninstalled."
 }
@@ -587,8 +579,7 @@ uninstall_search_tools() {
 }
 uninstall_lazygit() {
   log_info "Uninstalling Lazygit..."
-  # Remove from both possible locations to be safe
-  rm -f /usr/local/bin/lazygit
+  # Purge the apt version, which is standard on Debian 13
   apt purge -y lazygit >/dev/null 2>&1
   log_success "Lazygit uninstalled."
 }
@@ -621,11 +612,12 @@ show_menu() {
   show_banner
   echo -e "${BOLD}Installation Menu:${NC}"
   echo "------------------"
-  echo " 1) Update system packages"
+  echo " A) Configure APT sources & Update System (RECOMMENDED FIRST)"
+  echo " 1) Update system packages (if sources are already configured)"
   echo " 2) Install essential build tools"
   echo " 3) Install essential utilities (ranger, lsd, etc)"
   echo
-  echo -e "${BOLD}Security (Recommended First):${NC}"
+  echo -e "${BOLD}Security:${NC}"
   echo " 4) Install and Configure Firewall (UFW)"
   echo " 5) Install Fail2ban (Brute-force protection)"
   echo
@@ -644,7 +636,7 @@ show_menu() {
   echo " 15) Install Go"
   echo " 16) Install Python & Poetry"
   echo " 17) Install Docker"
-  echo " 18) Install Neovim & LazyVim"
+  echo " 18) Install Neovim & LazyVim (long process)"
   echo
   echo -e "${BOLD}System & Misc:${NC}"
   echo " 19) Install rclone (Cloud Sync)"
@@ -670,7 +662,7 @@ main() {
       exit 0
       ;;
     0)
-      tasks=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22)
+      tasks=('A' 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22)
       will_exec_zsh=true
       ;;
     99) read -r -p "$(echo -e ${RED}${BOLD}"Sure? This will remove ALL script-installed components. [y/N] "${NC})" confirm && [[ "$confirm" =~ ^[yY]$ ]] && uninstall_all ;;
@@ -679,7 +671,7 @@ main() {
     if [[ -n "${tasks-}" ]]; then
       for choice in "${tasks[@]}"; do
         case "$choice" in
-        1) update_system ;; 2) install_build_essentials ;; 3) install_utilities ;; 4) install_firewall ;; 5) install_fail2ban ;; 6) install_zsh ;;
+        A | a) configure_apt_sources ;; 1) update_system ;; 2) install_build_essentials ;; 3) install_utilities ;; 4) install_firewall ;; 5) install_fail2ban ;; 6) install_zsh ;;
         7) install_starship ;; 8) install_nerd_font ;; 9) install_tmux ;; 10) install_git ;; 11) install_lazygit ;; 12) install_search_tools ;;
         13) install_nvm_node ;; 14) install_rust ;; 15) install_go ;; 16) install_python_poetry ;; 17) install_docker ;; 18) install_neovim ;;
         19) install_rclone ;; 20) install_rsync ;; 21) create_dev_directory ;; 22) configure_ssh_priority ;;
