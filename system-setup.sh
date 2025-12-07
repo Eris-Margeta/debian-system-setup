@@ -3,14 +3,14 @@
 # Remote Development Environment Setup Script
 # For Debian/Ubuntu-based systems
 # ==========================================================
-# Version: 3.1.1 (Final Production with TOML fix)
-# Last Updated: Dec 3, 2025
+# Version: 4.0.0 (Apt-based Python & Lazygit)
+# Last Updated: Dec 7, 2025
 
 # --- CONFIGURATION ---
 # Easily update software versions here in the future.
 
 GO_VERSION="1.25.4"
-PYTHON_VERSION="3.12.3"
+# PYTHON_VERSION is now detected automatically from apt to ensure compatibility.
 NVM_VERSION="0.39.7"
 TMUX_VERSION="3.5a"
 # Fetches the latest stable Neovim for x86_64 architecture (standard for Hetzner)
@@ -92,11 +92,16 @@ install_zsh() {
   log_info "Installing ZSH and zplug..."
   apt install -y zsh zplug
   if [ -f "$ACTUAL_HOME/.zshrc" ]; then mv "$ACTUAL_HOME/.zshrc" "$ACTUAL_HOME/.zshrc.bak"; fi
+  # Detect the python executable for the alias
+  local python_executable
+  python_executable=$(apt-cache search --names-only '^python3\.[0-9]+$' | sort -V | tail -n 1)
+  if [ -z "$python_executable" ]; then python_executable="python3"; fi # Fallback
+
   cat >"$ACTUAL_HOME/.zshrc" <<EOL
 export TERM=xterm
 HISTFILE=~/.zsh_history; HISTSIZE=5000; SAVEHIST=5000
 alias ec="nvim ~/.zshrc"; alias ep="nvim ~/.config/starship.toml"; alias sc="source ~/.zshrc"; alias ls="lsd"; alias fd="fdfind"
-alias python='python3.12'
+alias python='$python_executable'
 source /usr/share/zplug/init.zsh
 zplug "zsh-users/zsh-syntax-highlighting"; zplug "zsh-users/zsh-autosuggestions"
 if ! zplug check; then zplug install; fi
@@ -207,10 +212,30 @@ install_search_tools() {
 
 install_lazygit() {
   log_info "Installing Lazygit..."
-  apt install -y software-properties-common
-  add-apt-repository ppa:lazygit-team/release -y
-  apt update
-  apt install -y lazygit
+  # Source os-release to get VERSION_CODENAME
+  if [ -f /etc/os-release ]; then
+    . /etc/os-release
+  else
+    log_error "Cannot determine Debian version. /etc/os-release not found."
+    return 1
+  fi
+
+  # Check if the version is Trixie/Sid or later
+  if [[ "$VERSION_CODENAME" == "trixie" || "$VERSION_CODENAME" == "sid" ]]; then
+    log_info "Debian $VERSION_CODENAME detected. Installing lazygit via apt..."
+    apt install -y lazygit
+  else
+    log_info "Debian $VERSION_CODENAME detected. Installing lazygit via binary download..."
+    LAZYGIT_VERSION=$(curl -s "https://api.github.com/repos/jesseduffield/lazygit/releases/latest" | grep -Po '"tag_name": *"v\K[^"]*')
+    if [ -z "$LAZYGIT_VERSION" ]; then
+      log_error "Could not fetch latest lazygit version from GitHub API."
+      return 1
+    fi
+    curl -Lo lazygit.tar.gz "https://github.com/jesseduffield/lazygit/releases/download/v${LAZYGIT_VERSION}/lazygit_${LAZYGIT_VERSION}_Linux_x86_64.tar.gz"
+    tar xf lazygit.tar.gz lazygit
+    install lazygit -D -t /usr/local/bin/
+    rm lazygit lazygit.tar.gz
+  fi
   log_success "Lazygit installed successfully."
 }
 
@@ -231,8 +256,10 @@ install_nerd_font() {
   log_info "Installing Nerd Font..."
   apt install -y fontconfig
   mkdir -p "$ACTUAL_HOME/.local/share/fonts"
-  cd /tmp && wget -q https://github.com/ryanoasis/nerd-fonts/releases/download/v3.2.1/Hack.zip
+  cd /tmp || return 1
+  wget -q https://github.com/ryanoasis/nerd-fonts/releases/download/v3.2.1/Hack.zip
   unzip -o -q Hack.zip -d "$ACTUAL_HOME/.local/share/fonts/"
+  chown -R "$ACTUAL_USER":"$ACTUAL_USER" "$ACTUAL_HOME/.local/share/fonts"
   if command -v fc-cache >/dev/null 2>&1; then fc-cache -f; fi
   rm -f Hack.zip
   log_success "Nerd Font installed."
@@ -255,17 +282,40 @@ install_docker() {
 }
 
 install_python_poetry() {
-  log_info "Installing Python $PYTHON_VERSION and Poetry..."
-  apt install -y build-essential libssl-dev zlib1g-dev wget python3-pip
-  cd /tmp || return 1
-  wget -q "https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tgz"
-  tar -xf "Python-$PYTHON_VERSION.tgz"
-  cd "Python-$PYTHON_VERSION" && ./configure --enable-optimizations && make -j"$(nproc)" && make altinstall
-  python3.12 -m pip install pynvim
-  su - "$ACTUAL_USER" -c "curl -sSL https://install.python-poetry.org | python3.12 -"
-  echo 'export PATH="$HOME/.local/bin:$PATH"' >>"$ACTUAL_HOME/.zshrc"
-  cd /tmp && rm -rf "Python-$PYTHON_VERSION"*
-  log_success "Python and Poetry installed."
+  log_info "Installing Python and Poetry via apt..."
+
+  # --- DYNAMICALLY DETECT LATEST PYTHON VERSION ---
+  log_info "Detecting latest available Python 3 version from apt..."
+  PYTHON_EXECUTABLE=$(apt-cache search --names-only '^python3\.[0-9]+$' | sort -V | tail -n 1)
+
+  if [ -z "$PYTHON_EXECUTABLE" ]; then
+    log_error "Could not automatically detect a suitable Python 3 version from apt."
+    log_error "Please check your repository configuration. Aborting Python setup."
+    return 1
+  fi
+  log_info "Detected latest available version: $GREEN$PYTHON_EXECUTABLE${NC}"
+
+  # --- INSTALL PYTHON AND DEPENDENCIES ---
+  log_info "Installing $PYTHON_EXECUTABLE, its development packages, and required libraries..."
+  apt install -y "$PYTHON_EXECUTABLE" "${PYTHON_EXECUTABLE}-venv" "${PYTHON_EXECUTABLE}-dev" python3-pip libffi-dev
+  log_success "Python installation complete."
+
+  # --- INSTALL POETRY ---
+  log_info "Performing a clean installation of Poetry..."
+  su - "$ACTUAL_USER" -c "curl -sSL https://install.python-poetry.org | $PYTHON_EXECUTABLE - --uninstall" >/dev/null 2>&1 || true
+  su - "$ACTUAL_USER" -c "rm -rf ~/.local/bin/poetry ~/.local/share/pypoetry ~/.cache/pypoetry"
+
+  su - "$ACTUAL_USER" -c "curl -sSL https://install.python-poetry.org | $PYTHON_EXECUTABLE -"
+  if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$ACTUAL_HOME/.zshrc"; then
+    echo '' >>"$ACTUAL_HOME/.zshrc"
+    echo '# Add Poetry to PATH' >>"$ACTUAL_HOME/.zshrc"
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >>"$ACTUAL_HOME/.zshrc"
+  fi
+  log_success "Poetry installed successfully."
+
+  log_info "Installing pynvim for Neovim integration..."
+  "$PYTHON_EXECUTABLE" -m pip install pynvim
+  log_success "Python and Poetry setup is complete."
 }
 
 install_tmux() {
@@ -460,9 +510,20 @@ uninstall_tmux() {
 }
 uninstall_python_poetry() {
   log_info "Uninstalling Poetry & Python..."
-  su - "$ACTUAL_USER" -c "curl -sSL https://install.python-poetry.org | python3.12 - --uninstall"
-  rm -rf "$ACTUAL_HOME/.local/bin/poetry" /usr/local/bin/python3.12
-  sed -i '/\.local\/bin/d' "$ACTUAL_HOME/.zshrc"
+
+  # Remove Poetry first and most robustly by deleting its files.
+  su - "$ACTUAL_USER" -c "rm -rf ~/.local/bin/poetry ~/.local/share/pypoetry ~/.cache/pypoetry"
+  sed -i -e '/# Add Poetry to PATH/d' -e '/\.local\/bin/d' "$ACTUAL_HOME/.zshrc"
+  log_info "Poetry files removed."
+
+  # Purge all python3.x packages managed by apt. The wildcard is important.
+  log_info "Purging all apt-managed python3.* packages..."
+  # Use a subshell to safely expand the package list
+  packages_to_purge=$(dpkg -l | grep 'python3\.[0-9]\+' | awk '{print $2}' | tr '\n' ' ')
+  if [ -n "$packages_to_purge" ]; then
+    purge_packages "$packages_to_purge"
+  fi
+  apt autoremove -y # Clean up dependencies
   log_success "Poetry & Python uninstalled."
 }
 uninstall_docker() {
@@ -526,8 +587,9 @@ uninstall_search_tools() {
 }
 uninstall_lazygit() {
   log_info "Uninstalling Lazygit..."
-  apt purge -y lazygit
-  add-apt-repository --remove ppa:lazygit-team/release -y
+  # Remove from both possible locations to be safe
+  rm -f /usr/local/bin/lazygit
+  apt purge -y lazygit >/dev/null 2>&1
   log_success "Lazygit uninstalled."
 }
 uninstall_firewall() {
