@@ -3,7 +3,7 @@
 # Remote Development Environment Setup Script
 # TARGET: DEBIAN 13 (TRIXIE)
 # ==========================================================
-# Version: 5.0.0 (Debian 13 Hardened)
+# Version: 5.1.0 (Slimmed Neovim Dependencies)
 # Last Updated: Dec 7, 2025
 
 # --- CONFIGURATION ---
@@ -353,18 +353,14 @@ EOL
 }
 
 install_neovim_dependencies() {
-  log_info "Installing all Neovim & LazyVim dependencies..."
+  log_info "Installing Neovim & LazyVim dependencies (Image support included)..."
   apt install -y lua5.1 liblua5.1-0-dev luajit luarocks trash-cli imagemagick ghostscript
   log_info "--> Installing Tree-sitter CLI v0.22.6 (required by LazyVim)..."
   curl -L https://github.com/tree-sitter/tree-sitter/releases/download/v0.22.6/tree-sitter-linux-x64.gz -o /tmp/tree-sitter.gz
   gunzip /tmp/tree-sitter.gz
   mv /tmp/tree-sitter /usr/local/bin/tree-sitter
   chmod +x /usr/local/bin/tree-sitter
-  log_info "--> Installing texlive-full for LaTeX support... This may take a long time."
-  apt install -y texlive-full
-  log_info "--> Installing Mermaid CLI for diagrams..."
-  su - "$ACTUAL_USER" -c 'source ~/.zshrc; npm i -g @mermaid-js/mermaid-cli'
-  log_success "All Neovim dependencies installed."
+  log_success "Neovim dependencies installed."
 }
 
 install_neovim() {
@@ -485,9 +481,8 @@ uninstall_all() {
 }
 uninstall_neovim() {
   log_info "Uninstalling Neovim..."
-  purge_packages lua5.1 liblua5.1-0-dev luajit luarocks trash-cli imagemagick ghostscript texlive-full
+  purge_packages lua5.1 liblua5.1-0-dev luajit luarocks trash-cli imagemagick ghostscript
   rm -f /usr/local/bin/tree-sitter
-  su - "$ACTUAL_USER" -c 'source ~/.zshrc; npm uninstall -g @mermaid-js/mermaid-cli'
   rm -rf "$ACTUAL_HOME/.local/nvim" "$ACTUAL_HOME/.config/nvim"
   sed -i "/alias nvim=/d" "$ACTUAL_HOME/.zshrc"
   log_success "Neovim & dependencies uninstalled."
@@ -636,7 +631,7 @@ show_menu() {
   echo " 15) Install Go"
   echo " 16) Install Python & Poetry"
   echo " 17) Install Docker"
-  echo " 18) Install Neovim & LazyVim (long process)"
+  echo " 18) Install Neovim & LazyVim"
   echo
   echo -e "${BOLD}System & Misc:${NC}"
   echo " 19) Install rclone (Cloud Sync)"
