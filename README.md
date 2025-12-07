@@ -1,8 +1,9 @@
-# Debian System Setup Script
+# Debian 13 (trixie) System Setup Script
 
 ## USAGE: 
 
 
+```bash
 curl -sL https://raw.githubusercontent.com/Eris-Margeta/debian-system-setup/master/system-setup.sh -o setup.sh && chmod +x setup.sh && sudo ./setup.sh
 ```
 
