@@ -159,23 +159,37 @@ install_starship() {
   mkdir -p "$ACTUAL_HOME/.config"
   cat >"$ACTUAL_HOME/.config/starship.toml" <<'EOL'
 # ~/.config/starship.toml
-format = """
-$directory$git_branch$git_status$python$nodejs$rust$golang$cmd_duration
+add_newlformat = """
+└── $username$hostname $directory$git_branch$git_status$python$nodejs$rust$golang$cmd_duration
 $character"""
 add_newline = true
+
 [character]
 success_symbol = "[➜](bold green)"
 error_symbol = "[➜](bold red)"
 vicmd_symbol = "[❖](bold green)"
+
+[username]
+show_always = true
+format = "[$user]($style)"
+
 [directory]
 style = "bold green"
+format = "[$path]($style) "
 truncation_length = 4
-truncate_to_repo = true
+truncate_to_repo = false
 home_symbol = "⌂"
 read_only = " [!](bold red)"
 truncation_symbol = "…/"
+
+[hostname]
+ssh_only = false
+format = "@"[$hostname]($style)"
+disabled = false
+
 [git_branch]
 format = " on [$branch](bold green)"
+
 [git_status]
 style = "bold red"
 stashed = " 📦"
@@ -187,19 +201,26 @@ deleted = " 🗑"
 renamed = " »"
 modified = " !"
 staged = " +"
+
 [python]
 format = " via [🐍 $version](bold green)"
+
 [nodejs]
 format = " via [⬢ $version](bold green)"
+
 [rust]
 format = " via [🦀 $version](bold red)"
+
 [golang]
 format = " via [🐹 $version](bold cyan)"
+
 [cmd_duration]
-format = " took [$duration](bold yellow)"
+format = "⏳ [$duration](bold yellow)"
 min_time = 1000
+
 [package]
 disabled = true
+
 [battery]
 disabled = true
 EOL
