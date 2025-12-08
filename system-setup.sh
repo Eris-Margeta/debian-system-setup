@@ -188,7 +188,7 @@ format = "@"[$hostname]($style)"
 disabled = false
 
 [git_branch]
-format = " on [$branch](bold green)"
+format = " [$branch](bold green)"
 
 [git_status]
 style = "bold red"
@@ -216,7 +216,7 @@ format = " via [🐹 $version](bold cyan)"
 
 [cmd_duration]
 format = "⏳ [$duration](bold yellow)"
-min_time = 1000
+min_time = 2000
 
 [package]
 disabled = true
