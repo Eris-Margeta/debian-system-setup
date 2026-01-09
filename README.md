@@ -1,4 +1,4 @@
-# Debian 13 (Trixie) Development Environment Setup Script
+# Debian 13 (Trixie) Development Environment Setup Script [DEPRECATED]
 
 A robust, idempotent script to automate the setup of a complete and secure development environment on a fresh Debian 13 "Trixie" server.
 
