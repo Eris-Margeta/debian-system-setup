@@ -1,5 +1,8 @@
 # Debian 13 (Trixie) Development Environment Setup Script [DEPRECATED]
 
+Now moved to a unified tools monorepo for easier management and discovery:
+https://github.com/Eris-Margeta/tools
+
 A robust, idempotent script to automate the setup of a complete and secure development environment on a fresh Debian 13 "Trixie" server.
 
 ## USAGE: 
